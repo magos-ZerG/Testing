@@ -1,0 +1,106 @@
+# Isolated per run through COMPOSE_PROJECT_NAME; only the Gradle download/cache volume is persistent.
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: studymate_lab2
+      POSTGRES_USER: lab2
+      POSTGRES_PASSWORD: lab2_only_test_password
+    tmpfs:
+      - /var/lib/postgresql/data:rw,size=512m
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U lab2 -d studymate_lab2"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+
+  api:
+    build:
+      context: ../server
+    environment:
+      DATABASE_BACKEND: postgresql
+      DATABASE_URL: postgresql+psycopg://lab2:lab2_only_test_password@postgres:5432/studymate_lab2
+      RUN_MIGRATIONS_ON_STARTUP: 'true'
+      JWT_SECRET: 'lab2_isolated_testing_only_signing_secret_please_never_use_in_production'
+      FILE_STORAGE_DIR: /tmp/lab2-files
+      LOG_FILE_PATH: /tmp/lab2-api.log
+    tmpfs:
+      - /tmp:rw,size=256m
+    ports:
+      - "127.0.0.1:${LAB2_HOST_PORT:-0}:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8000/health"]
+      interval: 3s
+      timeout: 3s
+      retries: 40
+      start_period: 5s
+
+  tests:
+    build:
+      context: ..
+      dockerfile: lab2/Dockerfile.test-runner
+    working_dir: /workspace/server
+    environment:
+      DATABASE_BACKEND: postgresql
+      DATABASE_URL: postgresql+psycopg://lab2:lab2_only_test_password@postgres:5432/studymate_lab2
+      LAB2_TEST_DATABASE_URL: postgresql+psycopg://lab2:lab2_only_test_password@postgres:5432/studymate_lab2
+      LAB2_API_URL: http://api:8000
+      JWT_SECRET: 'lab2_isolated_testing_only_signing_secret_please_never_use_in_production'
+      FILE_STORAGE_DIR: /tmp/lab2-files
+      LOG_FILE_PATH: /tmp/lab2-test.log
+    volumes:
+      # :z marks source files as shared between container processes under Fedora SELinux.
+      - ..:/workspace:z
+    depends_on:
+      api:
+        condition: service_healthy
+    profiles: [tests]
+
+  android-tests:
+    build:
+      context: ..
+      dockerfile: lab2/Dockerfile.android-runner
+    working_dir: /workspace/mobile-app
+    volumes:
+      - ..:/workspace:z
+      # Share Gradle distributions/dependencies between otherwise isolated test runs.
+      - gradle-cache:/root/.gradle
+    network_mode: host
+    environment:
+        GRADLE_USER_HOME: /root/.gradle
+        ADB_SERVER_SOCKET: tcp:127.0.0.1:5037
+    profiles: [android]
+
+  report:
+    build:
+      context: ..
+      dockerfile: lab2/Dockerfile.report
+    volumes:
+      - ./reports:/reports:z
+    profiles: [report]
+
+  capture:
+    build:
+      context: ..
+      dockerfile: lab2/Dockerfile.capture
+    network_mode: service:api
+    cap_add:
+      - NET_RAW
+      - NET_ADMIN
+    volumes:
+      - ./reports:/reports:z
+    command: ["tcpdump", "-i", "any", "-s", "0", "-U", "-w", "/reports/lab2-e2e.pcap", "tcp", "port", "8000"]
+    depends_on:
+      api:
+        condition: service_healthy
+    profiles: [capture]
+
+# External prevents `docker compose down --volumes` from removing this shared cache.
+# The runner creates it on first use (`docker volume create`). Test DB/storage stay temporary.
+volumes:
+  gradle-cache:
+    external: true
+    name: ${LAB2_GRADLE_CACHE_VOLUME:-studymate_lab2_gradle_cache}

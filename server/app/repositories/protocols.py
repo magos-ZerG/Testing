@@ -1,0 +1,39 @@
+from __future__ import annotations
+
+from datetime import datetime
+from typing import Any, Protocol
+
+from app.schemas.sync import InitialSyncRequest, PushRequest
+
+
+class UserRepository(Protocol):
+    def get_by_id(self, user_id: str) -> Any | None: ...
+    def get_by_email(self, email: str) -> Any | None: ...
+    def create(self, *, email: str, password_hash: str) -> Any: ...
+
+
+class RefreshTokenRepository(Protocol):
+    def create(self, *, user_id: str, token_hash: str, expires_at: datetime) -> Any: ...
+    def get_by_hash_for_update(self, token_hash: str) -> Any | None: ...
+    def revoke(self, token: Any, revoked_at: datetime) -> None: ...
+
+
+class SyncRepository(Protocol):
+    def apply_push(self, user_id: str, payload: PushRequest): ...
+    def pull_changes(self, user_id: str, since: datetime | None): ...
+    def handle_initial_sync(self, user_id: str, payload: InitialSyncRequest): ...
+
+
+class AttachmentRepository(Protocol):
+    def get_by_id(self, attachment_id: str) -> Any | None: ...
+    def update_upload_metadata(
+        self,
+        attachment_id: str,
+        *,
+        remote_file_id: str,
+        storage_key: str,
+        size_bytes: int,
+        mime_type: str | None,
+        updated_at: datetime,
+    ) -> Any: ...
+    def rollback(self) -> None: ...
