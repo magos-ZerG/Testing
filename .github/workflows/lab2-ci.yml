@@ -1,0 +1,62 @@
+name: StudyMate Lab 2 - CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: lab2-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lab2:
+    name: Unit -> Integration -> E2E
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Check Docker and Compose
+        run: |
+          docker version
+          docker compose version
+          python3 --version
+
+      # History is restored before lab2/scripts/run-lab2.sh, which preserves it.
+      - name: Restore Allure history
+        uses: actions/cache/restore@v4
+        with:
+          path: lab2/reports/history
+          key: lab2-allure-${{ github.ref_name }}-${{ github.run_id }}
+          restore-keys: |
+            lab2-allure-${{ github.ref_name }}-
+
+      # The single script keeps the required order and produces explicit
+      # skipped markers for stages after a failure.
+      - name: Unit -> Integration -> E2E (isolated Docker stand)
+        env:
+          RUN_ANDROID_DEVICE_TESTS: '0'
+        run: bash lab2/scripts/run-lab2.sh all
+
+      - name: Save Allure history
+        if: ${{ always() }}
+        uses: actions/cache/save@v4
+        with:
+          path: lab2/reports/history
+          key: lab2-allure-${{ github.ref_name }}-${{ github.run_id }}
+
+      - name: Upload test reports (including on failure)
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: lab2-reports-${{ github.run_id }}
+          path: |
+            lab2/reports/
+            mobile-app/data/build/reports/jacoco/lab/
+          retention-days: 30
+          if-no-files-found: warn

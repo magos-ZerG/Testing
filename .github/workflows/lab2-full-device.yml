@@ -1,0 +1,42 @@
+name: StudyMate Lab 2 - Full CI with physical Android
+
+# Manual by design: it must not run unless the Fedora machine is on
+# and the phone is physically connected and authorized over ADB.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  lab2-physical-device:
+    name: Unit -> Integration -> Android device -> E2E
+    runs-on: [self-hosted, linux, x64, android-device]
+    timeout-minutes: 120
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Verify local Docker and phone
+        run: |
+          docker info >/dev/null
+          docker compose version
+          adb start-server
+          adb devices -l
+          adb devices | grep -Eq '[[:space:]]device$' || { echo 'No authorized Android device detected'; exit 1; }
+
+      - name: Run full lab on the physical device
+        env:
+          RUN_ANDROID_DEVICE_TESTS: '1'
+        run: bash lab2/scripts/run-lab2.sh all
+
+      - name: Upload test reports (including on failure)
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: lab2-android-reports-${{ github.run_id }}
+          path: |
+            lab2/reports/
+            mobile-app/data/build/reports/jacoco/lab/
+          retention-days: 30
+          if-no-files-found: warn
