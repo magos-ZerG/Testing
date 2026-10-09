@@ -1,0 +1,10 @@
+# Do not send the Gradle cache or generated files as Docker build context.
+.git/
+.github/
+.ci-cache/
+.pages-site/
+**/.gradle/
+**/build/
+**/__pycache__/
+**/.pytest_cache/
+lab2/reports/

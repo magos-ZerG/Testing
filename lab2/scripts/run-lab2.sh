@@ -5,11 +5,13 @@ set -Eeuo pipefail
 
 usage() {
   cat <<'USAGE'
-Usage: lab2/scripts/run-lab2.sh [all|unit|integration|android-device|e2e|report]
+Usage: lab2/scripts/run-lab2.sh [all|unit|unit-python|unit-android|integration|android-device|e2e|report]
 
   all             Unit -> integration (twice) -> optional Android device -> E2E.
                   Default; set RUN_ANDROID_DEVICE_TESTS=1 to include a device.
   unit            Python and Android unit tests, plus JaCoCo coverage.
+  unit-python     Python unit tests only.
+  unit-android    Kotlin/Robolectric unit tests and JaCoCo only.
   integration     Server repository integration tests twice on one test DB.
   android-device  Instrumentation tests on a connected Android device; starts
                   its own PostgreSQL/API stand, without running other tests.
@@ -31,7 +33,7 @@ if (( $# > 1 )); then
 fi
 MODE="${1:-all}"
 case "$MODE" in
-  all|unit|integration|android-device|e2e|report) ;;
+  all|unit|unit-python|unit-android|integration|android-device|e2e|report) ;;
   *) printf 'Unknown test stage: %s\n\n' "$MODE" >&2; usage >&2; exit 2 ;;
 esac
 
@@ -91,6 +93,9 @@ copy_junit() {
 
 # Single-stage reports explicitly distinguish the tests selected from those skipped.
 mark_not_selected() {
+  # Parallel GitHub jobs represent one overall pipeline: marking other stages as
+  # skipped inside each job would make the combined Allure report misleading.
+  if [[ "${LAB2_CI_STAGE:-0}" == 1 ]]; then return 0; fi
   local selected="$1" stage
   for stage in unit integration android-device e2e; do
     if [[ "$stage" != "$selected" ]]; then
@@ -106,31 +111,35 @@ start_stand() {
   fi
 }
 
-run_unit() {
-  printf '\n=== STAGE 1: LAB1 Android unit + server schema unit ===\n'
-  local rc=0
-  local reason=''
-  compose run --build --rm --no-deps tests python -m pytest -m unit tests/unit -v \
+run_unit_python() {
+  printf '\n=== STAGE: Python schema unit tests ===\n'
+  if ! compose run --build --rm --no-deps tests python -m pytest -m unit tests/unit -v \
     --junitxml=/workspace/lab2/reports/junit/unit-server.xml \
-    --alluredir=/workspace/lab2/reports/allure-results || {
-      rc=$?
-      reason="Server Python unit tests exited with code $rc"
-    }
-  if [[ "$rc" -eq 0 ]]; then
-    compose run --build --rm --no-deps android-tests bash -lc \
-      'chmod +x ./gradlew && ./gradlew --no-daemon :data:labCoverage' || {
-        rc=$?
-        reason="Android Gradle lab1 unit suite exited with code $rc"
-      }
+    --alluredir=/workspace/lab2/reports/allure-results; then
+    mark unit failed 'Server Python unit tests failed'
+    return 1
   fi
+}
+
+run_unit_android() {
+  printf '\n=== STAGE: Android JVM/Robolectric unit tests ===\n'
+  local rc=0
+  compose run --build --rm --no-deps android-tests bash -lc \
+    'chmod +x ./gradlew && ./gradlew --no-daemon :data:labCoverage' || rc=$?
   copy_junit "$ROOT/mobile-app/data/build/test-results/testDebugUnitTest" unit
   if [ -d "$ROOT/mobile-app/data/build/allure-results" ]; then
     cp -a "$ROOT/mobile-app/data/build/allure-results/." "$REPORTS/allure-results/"
   fi
   if [[ "$rc" -ne 0 ]]; then
-    mark unit failed "$reason"
+    mark unit failed "Android Gradle lab1 unit suite exited with code $rc"
     return 1
   fi
+}
+
+run_unit() {
+  printf '\n=== STAGE 1: LAB1 Android + Python unit suites ===\n'
+  run_unit_python || return 1
+  run_unit_android || return 1
 }
 
 run_integration() {
@@ -178,6 +187,14 @@ run_e2e() {
 }
 
 case "$MODE" in
+  unit-python)
+    mark_not_selected unit
+    run_unit_python || exit 1
+    ;;
+  unit-android)
+    mark_not_selected unit
+    run_unit_android || exit 1
+    ;;
   unit)
     mark_not_selected unit
     run_unit || exit 1

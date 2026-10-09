@@ -10,3 +10,6 @@ lab2/reports/*
 !lab2/reports/.gitkeep
 # Temporary GitHub Pages working tree (publishes via Actions only)
 .pages-site/
+
+# GitHub Actions cached Gradle home (bind-mounted into Docker)
+.ci-cache/

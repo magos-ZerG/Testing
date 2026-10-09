@@ -10,195 +10,156 @@ permissions:
   contents: read
 
 jobs:
-  discover:
-    name: Discover individual tests
-    runs-on: ubuntu-24.04
-    outputs:
-      unit_python: ${{ steps.tests.outputs.unit_python }}
-      unit_android: ${{ steps.tests.outputs.unit_android }}
-      integration: ${{ steps.tests.outputs.integration }}
-      e2e: ${{ steps.tests.outputs.e2e }}
-      device: ${{ steps.tests.outputs.device }}
-    steps:
-      - uses: actions/checkout@v4
-      - name: Enumerate each test as its own job
-        id: tests
-        run: python3 lab2/scripts/ci_catalog.py --github-output "$GITHUB_OUTPUT" --summary
-
   unit-python:
-    name: "Unit / Python · ${{ matrix.title }}"
-    needs: [discover]
-    runs-on: ubuntu-24.04
-    timeout-minutes: 40
-    strategy:
-      fail-fast: false
-      max-parallel: 4
-      matrix:
-        include: ${{ fromJSON(needs.discover.outputs.unit_python) }}
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@v4
-      - name: Run the single test in Docker
-        id: test
-        env:
-          TEST_KIND: python-unit
-          CASE_ID: ${{ matrix.id }}
-          TEST_SELECTOR: ${{ matrix.selector }}
-        run: bash lab2/scripts/ci_run_one.sh "$TEST_KIND" "$CASE_ID" "$TEST_SELECTOR"
-
-      - name: Record outcome and create fallback test report
-        if: ${{ always() }}
-        env:
-          TEST_KIND: python-unit
-          CASE_ID: ${{ matrix.id }}
-          TEST_SELECTOR: ${{ matrix.selector }}
-          TEST_OUTCOME: ${{ steps.test.outcome }}
-        run: |
-          python3 lab2/scripts/ci_case_reports.py record \
-            --kind "$TEST_KIND" --id "$CASE_ID" --selector "$TEST_SELECTOR" --outcome "$TEST_OUTCOME"
-
-      - name: Upload this test's results
-        if: ${{ always() }}
-        uses: actions/upload-artifact@v4
-        with:
-          name: lab2-case-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.id }}
-          path: lab2/reports/
-          if-no-files-found: error
-          retention-days: 30
-
-  unit-android:
-    name: "Unit / Kotlin · ${{ matrix.title }}"
-    needs: [discover]
-    runs-on: ubuntu-24.04
-    timeout-minutes: 40
-    strategy:
-      fail-fast: false
-      max-parallel: 4
-      matrix:
-        include: ${{ fromJSON(needs.discover.outputs.unit_android) }}
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@v4
-      - name: Run the single test in Docker
-        id: test
-        env:
-          TEST_KIND: android-unit
-          CASE_ID: ${{ matrix.id }}
-          TEST_SELECTOR: ${{ matrix.selector }}
-        run: bash lab2/scripts/ci_run_one.sh "$TEST_KIND" "$CASE_ID" "$TEST_SELECTOR"
-
-      - name: Record outcome and create fallback test report
-        if: ${{ always() }}
-        env:
-          TEST_KIND: android-unit
-          CASE_ID: ${{ matrix.id }}
-          TEST_SELECTOR: ${{ matrix.selector }}
-          TEST_OUTCOME: ${{ steps.test.outcome }}
-        run: |
-          python3 lab2/scripts/ci_case_reports.py record \
-            --kind "$TEST_KIND" --id "$CASE_ID" --selector "$TEST_SELECTOR" --outcome "$TEST_OUTCOME"
-
-      - name: Upload this test's results
-        if: ${{ always() }}
-        uses: actions/upload-artifact@v4
-        with:
-          name: lab2-case-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.id }}
-          path: lab2/reports/
-          if-no-files-found: error
-          retention-days: 30
-
-  integration:
-    name: "Integration / PostgreSQL (twice) · ${{ matrix.title }}"
-    needs: [discover, unit-python, unit-android]
-    runs-on: ubuntu-24.04
-    timeout-minutes: 40
-    strategy:
-      fail-fast: false
-      max-parallel: 4
-      matrix:
-        include: ${{ fromJSON(needs.discover.outputs.integration) }}
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@v4
-      - name: Run the single test in Docker
-        id: test
-        env:
-          TEST_KIND: integration
-          CASE_ID: ${{ matrix.id }}
-          TEST_SELECTOR: ${{ matrix.selector }}
-        run: bash lab2/scripts/ci_run_one.sh "$TEST_KIND" "$CASE_ID" "$TEST_SELECTOR"
-
-      - name: Record outcome and create fallback test report
-        if: ${{ always() }}
-        env:
-          TEST_KIND: integration
-          CASE_ID: ${{ matrix.id }}
-          TEST_SELECTOR: ${{ matrix.selector }}
-          TEST_OUTCOME: ${{ steps.test.outcome }}
-        run: |
-          python3 lab2/scripts/ci_case_reports.py record \
-            --kind "$TEST_KIND" --id "$CASE_ID" --selector "$TEST_SELECTOR" --outcome "$TEST_OUTCOME"
-
-      - name: Upload this test's results
-        if: ${{ always() }}
-        uses: actions/upload-artifact@v4
-        with:
-          name: lab2-case-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.id }}
-          path: lab2/reports/
-          if-no-files-found: error
-          retention-days: 30
-
-  e2e:
-    name: "E2E / HTTP · ${{ matrix.title }}"
-    needs: [discover, integration]
-    runs-on: ubuntu-24.04
-    timeout-minutes: 40
-    strategy:
-      fail-fast: false
-      max-parallel: 4
-      matrix:
-        include: ${{ fromJSON(needs.discover.outputs.e2e) }}
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@v4
-      - name: Run the single test in Docker
-        id: test
-        env:
-          TEST_KIND: e2e
-          CASE_ID: ${{ matrix.id }}
-          TEST_SELECTOR: ${{ matrix.selector }}
-        run: bash lab2/scripts/ci_run_one.sh "$TEST_KIND" "$CASE_ID" "$TEST_SELECTOR"
-
-      - name: Record outcome and create fallback test report
-        if: ${{ always() }}
-        env:
-          TEST_KIND: e2e
-          CASE_ID: ${{ matrix.id }}
-          TEST_SELECTOR: ${{ matrix.selector }}
-          TEST_OUTCOME: ${{ steps.test.outcome }}
-        run: |
-          python3 lab2/scripts/ci_case_reports.py record \
-            --kind "$TEST_KIND" --id "$CASE_ID" --selector "$TEST_SELECTOR" --outcome "$TEST_OUTCOME"
-
-      - name: Upload this test's results
-        if: ${{ always() }}
-        uses: actions/upload-artifact@v4
-        with:
-          name: lab2-case-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.id }}
-          path: lab2/reports/
-          if-no-files-found: error
-          retention-days: 30
-
-  prepare-pages:
-    name: Collect results + Allure history + Pages artifact
-    needs: [discover, unit-python, unit-android, integration, e2e]
-    if: ${{ always() && github.event_name != 'pull_request' && github.ref == 'refs/heads/main' }}
+    name: "Python unit (8 tests)"
     runs-on: ubuntu-24.04
     timeout-minutes: 35
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Run all unit-python tests in one Docker stage
+        id: tests
+        env:
+          LAB2_CI_STAGE: '1'
+        run: bash lab2/scripts/run-lab2.sh unit-python
+
+      - name: Record stage status for Allure aggregation
+        if: ${{ always() }}
+        env:
+          STAGE_OUTCOME: ${{ steps.tests.outcome }}
+        run: |
+          mkdir -p lab2/reports/ci-stage-results
+          printf '%s\n' "$STAGE_OUTCOME" > lab2/reports/ci-stage-results/unit-python.txt
+
+      - name: Upload unit-python test results
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: lab2-stage-${{ github.run_id }}-${{ github.run_attempt }}-unit-python
+          path: lab2/reports/
+          if-no-files-found: warn
+          retention-days: 30
+  unit-android:
+    name: "Kotlin unit / Robolectric (10 tests)"
+    runs-on: ubuntu-24.04
+    timeout-minutes: 65
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Docker is ephemeral on a GitHub-hosted runner; an external Docker volume
+      # alone cannot persist across CI runs. Cache a host directory and bind it
+      # directly to the container's GRADLE_USER_HOME.
+      - name: Restore Gradle distributions and dependencies
+        uses: actions/cache@v4
+        with:
+          path: .ci-cache/gradle
+          key: gradle-linux-v2-${{ hashFiles('mobile-app/gradle/wrapper/gradle-wrapper.properties', 'mobile-app/**/*.gradle.kts', 'mobile-app/gradle/libs.versions.toml', 'mobile-app/gradle.properties') }}
+          restore-keys: |
+            gradle-linux-v2-
+
+      - name: Prepare writable Gradle cache directory
+        run: mkdir -p .ci-cache/gradle
+
+      - name: Run all unit-android tests in one Docker stage
+        id: tests
+        env:
+          LAB2_CI_STAGE: '1'
+          LAB2_GRADLE_CACHE_MOUNT: ${{ github.workspace }}/.ci-cache/gradle
+        run: bash lab2/scripts/run-lab2.sh unit-android
+
+      - name: Restore runner permissions for cache upload
+        if: ${{ always() }}
+        run: |
+          if [[ -d .ci-cache/gradle ]]; then
+            sudo chown -R "$(id -u):$(id -g)" .ci-cache/gradle
+          fi
+
+      - name: Record stage status for Allure aggregation
+        if: ${{ always() }}
+        env:
+          STAGE_OUTCOME: ${{ steps.tests.outcome }}
+        run: |
+          mkdir -p lab2/reports/ci-stage-results
+          printf '%s\n' "$STAGE_OUTCOME" > lab2/reports/ci-stage-results/unit-android.txt
+
+      - name: Upload unit-android test results
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: lab2-stage-${{ github.run_id }}-${{ github.run_attempt }}-unit-android
+          path: lab2/reports/
+          if-no-files-found: warn
+          retention-days: 30
+  integration:
+    name: "Integration / PostgreSQL (9 tests, 2 passes)"
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    needs: [unit-python, unit-android]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Run all integration tests in one Docker stage
+        id: tests
+        env:
+          LAB2_CI_STAGE: '1'
+        run: bash lab2/scripts/run-lab2.sh integration
+
+      - name: Record stage status for Allure aggregation
+        if: ${{ always() }}
+        env:
+          STAGE_OUTCOME: ${{ steps.tests.outcome }}
+        run: |
+          mkdir -p lab2/reports/ci-stage-results
+          printf '%s\n' "$STAGE_OUTCOME" > lab2/reports/ci-stage-results/integration.txt
+
+      - name: Upload integration test results
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: lab2-stage-${{ github.run_id }}-${{ github.run_attempt }}-integration
+          path: lab2/reports/
+          if-no-files-found: warn
+          retention-days: 30
+  e2e:
+    name: "E2E / API + database (3 tests)"
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    needs: [integration]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Run all e2e tests in one Docker stage
+        id: tests
+        env:
+          LAB2_CI_STAGE: '1'
+        run: bash lab2/scripts/run-lab2.sh e2e
+
+      - name: Record stage status for Allure aggregation
+        if: ${{ always() }}
+        env:
+          STAGE_OUTCOME: ${{ steps.tests.outcome }}
+        run: |
+          mkdir -p lab2/reports/ci-stage-results
+          printf '%s\n' "$STAGE_OUTCOME" > lab2/reports/ci-stage-results/e2e.txt
+
+      - name: Upload e2e test results
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: lab2-stage-${{ github.run_id }}-${{ github.run_attempt }}-e2e
+          path: lab2/reports/
+          if-no-files-found: warn
+          retention-days: 30
+  prepare-pages:
+    name: Collect stage results + generate Allure + save Pages history
+    needs: [unit-python, unit-android, integration, e2e]
+    if: ${{ always() && github.event_name != 'pull_request' && github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
     concurrency:
       group: studymate-lab2-pages-history
       cancel-in-progress: false
@@ -208,38 +169,38 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Check which test-result artifacts actually exist
+      - name: Check for available stage artifacts
         id: artifacts
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
-          prefix="lab2-case-${{ github.run_id }}-${{ github.run_attempt }}-"
+          prefix="lab2-stage-${{ github.run_id }}-${{ github.run_attempt }}-"
           if ! count="$(gh api "/repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/artifacts?per_page=100" \
             --jq ".artifacts | map(select(.name | startswith(\"$prefix\"))) | length")"; then
-            echo 'Warning: artifact API call failed; preparing failure diagnostics' >&2
+            echo 'Warning: could not enumerate artifacts; Allure will report the missing data' >&2
             count=0
           fi
-          echo "Found $count individual test artifacts"
+          echo "Found $count stage artifacts"
           if [[ "$count" -gt 0 ]]; then echo 'found=true' >> "$GITHUB_OUTPUT"; else echo 'found=false' >> "$GITHUB_OUTPUT"; fi
 
-      - name: Download available test results (never request a nonexistent exact name)
+      - name: Download the available test results
         if: ${{ steps.artifacts.outputs.found == 'true' }}
         uses: actions/download-artifact@v4
         with:
-          pattern: lab2-case-${{ github.run_id }}-${{ github.run_attempt }}-*
+          pattern: lab2-stage-${{ github.run_id }}-${{ github.run_attempt }}-*
           merge-multiple: true
           path: lab2/reports/
 
-      - name: Include skipped tests and infrastructure failures in Allure
+      - name: Include failed and skipped stages in Allure
         env:
           CI_STATUS_UNIT_PYTHON: ${{ needs.unit-python.result }}
           CI_STATUS_UNIT_ANDROID: ${{ needs.unit-android.result }}
           CI_STATUS_INTEGRATION: ${{ needs.integration.result }}
           CI_STATUS_E2E: ${{ needs.e2e.result }}
-        run: python3 lab2/scripts/ci_case_reports.py aggregate
+        run: python3 lab2/scripts/ci_stage_reports.py
 
-      - name: Restore previously published report from gh-pages
+      - name: Restore previous Allure report from gh-pages
         shell: bash
         run: |
           mkdir -p .pages-site
@@ -247,24 +208,24 @@ jobs:
             git fetch --no-tags origin gh-pages
             git archive FETCH_HEAD | tar -xf - -C .pages-site
           else
-            echo 'First Pages publication: no gh-pages branch yet'
+            echo 'First publication: gh-pages does not exist yet'
           fi
 
-      - name: Merge historical trends into current results
+      - name: Restore historical trends into current results
         env:
           LAB2_TEST_CONCLUSION: ${{ needs.e2e.result == 'success' && 'success' || 'failure' }}
           LAB2_PAGES_BASE_URL: ${{ vars.LAB2_PAGES_BASE_URL }}
         run: python3 lab2/scripts/pages_site.py prepare --site .pages-site --reports lab2/reports
 
-      - name: Build Allure 2 HTML in its Docker container
+      - name: Generate combined Allure report
         run: bash lab2/scripts/run-lab2.sh report
 
-      - name: Save current report and the previous runs
+      - name: Update Pages website and archive this run
         env:
           LAB2_PAGES_BASE_URL: ${{ vars.LAB2_PAGES_BASE_URL }}
         run: python3 lab2/scripts/pages_site.py finish --site .pages-site --reports lab2/reports
 
-      - name: Persist Pages history in gh-pages branch
+      - name: Persist historical website in gh-pages branch
         uses: peaceiris/actions-gh-pages@v4
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
@@ -272,12 +233,12 @@ jobs:
           publish_dir: .pages-site
           force_orphan: true
 
-      - name: Upload GitHub Pages website artifact
+      - name: Upload website for GitHub Pages
         uses: actions/upload-pages-artifact@v3
         with:
           path: .pages-site
 
-      - name: Upload merged raw results for debugging
+      - name: Upload combined diagnostic results
         if: ${{ always() }}
         uses: actions/upload-artifact@v4
         with:
@@ -287,7 +248,7 @@ jobs:
           retention-days: 30
 
   deploy-pages:
-    name: Deploy Allure to GitHub Pages
+    name: Publish Allure website (GitHub Pages)
     needs: [prepare-pages]
     runs-on: ubuntu-24.04
     permissions:
@@ -297,12 +258,12 @@ jobs:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
-      - name: Publish site
+      - name: Deploy
         id: deployment
         uses: actions/deploy-pages@v4
       - name: Show report URL
         env:
           URL: ${{ steps.deployment.outputs.page_url }}
         run: |
-          echo "### [StudyMate Allure report]($URL)" >> "$GITHUB_STEP_SUMMARY"
-          echo "[Previous runs](${{ steps.deployment.outputs.page_url }}runs/)" >> "$GITHUB_STEP_SUMMARY"
+          echo "### [Latest StudyMate Allure report]($URL)" >> "$GITHUB_STEP_SUMMARY"
+          echo "[Archived reports](${URL}runs/)" >> "$GITHUB_STEP_SUMMARY"

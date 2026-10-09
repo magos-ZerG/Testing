@@ -8,7 +8,7 @@ from uuid import uuid4
 from xml.etree.ElementTree import Element, SubElement, ElementTree
 
 parser = argparse.ArgumentParser()
-parser.add_argument("stage", choices=["unit", "integration", "e2e", "android-device"])
+parser.add_argument("stage", choices=["unit", "unit-python", "unit-android", "integration", "e2e", "android-device"])
 parser.add_argument("status", choices=["failed", "skipped"])
 parser.add_argument("reason")
 parser.add_argument("--reports", default="lab2/reports")
