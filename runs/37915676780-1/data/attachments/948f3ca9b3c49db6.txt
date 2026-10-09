@@ -1,0 +1,1 @@
+WARNING  app.services.auth_service:auth_service.py:49 Registration rejected: email already exists | email=duplicate-a4e40f5b11724a93beb1e8eecdd0c055@example.com
