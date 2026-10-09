@@ -160,27 +160,54 @@ jobs:
           if-no-files-found: warn
           retention-days: 30
   e2e:
-    name: "Headless Android app E2E / physical device + API + PostgreSQL"
-    runs-on: [self-hosted, linux, x64, android-device]
+    # A GitHub-hosted job; this E2E never installs an APK on the real phone.
+    # Independent of the self-hosted android-device job: a USB phone isn't
+    # required for app E2E. The Pages job collects both sets of results.
+    name: "Headless Android app E2E / GitHub emulator + API + PostgreSQL"
+    runs-on: ubuntu-24.04
     timeout-minutes: 100
-    needs: [android-device]
+    needs: [integration]
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Verify Docker and authorized physical Android phone
-        run: |
-          docker info >/dev/null
-          docker compose version
-          adb start-server
-          adb devices -l
-          adb devices | grep -Eq '[[:space:]]device$'
+      - name: Restore Gradle distributions and dependencies
+        uses: actions/cache@v4
+        with:
+          path: .ci-cache/gradle
+          key: gradle-linux-v2-${{ hashFiles('mobile-app/gradle/wrapper/gradle-wrapper.properties', 'mobile-app/**/*.gradle.kts', 'mobile-app/gradle/libs.versions.toml', 'mobile-app/gradle.properties') }}
+          restore-keys: |
+            gradle-linux-v2-
 
-      - name: Run Android app E2E through real backend (no UI)
+      - name: Prepare writable Gradle cache
+        run: mkdir -p .ci-cache/gradle
+
+      - name: Enable hardware acceleration for Android emulator
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          test -e /dev/kvm
+
+      - name: Run real StudyMate application E2E on GitHub emulator (no UI)
         id: tests
+        uses: reactivecircus/android-emulator-runner@v2
         env:
           LAB2_CI_STAGE: '1'
-        run: bash lab2/scripts/run-lab2.sh e2e
+          LAB2_GRADLE_CACHE_MOUNT: ${{ github.workspace }}/.ci-cache/gradle
+        with:
+          api-level: 35
+          target: google_apis
+          arch: x86_64
+          disable-animations: true
+          script: bash lab2/scripts/run-lab2.sh e2e
+
+      - name: Restore runner permissions for Gradle cache upload
+        if: ${{ always() }}
+        run: |
+          if [[ -d .ci-cache/gradle ]]; then
+            sudo chown -R "$(id -u):$(id -g)" .ci-cache/gradle
+          fi
 
       - name: Record E2E stage status for Allure aggregation
         if: ${{ always() }}

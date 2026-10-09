@@ -56,6 +56,7 @@ import com.z23u184.studymate.domain.usecase.UpdateTaskUseCase
 import com.z23u184.studymate.domain.validation.DefaultTaskValidator
 import com.z23u184.studymate.domain.validation.DefaultTopicValidator
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.Json
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
@@ -73,7 +74,6 @@ import java.util.UUID
 import java.util.concurrent.TimeUnit
 import kotlin.time.ExperimentalTime
 import kotlin.time.Instant
-import kotlinx.coroutines.test.runTest
 
 @RunWith(AndroidJUnit4::class)
 class RealServerDataIntegrationTest {

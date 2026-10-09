@@ -8,7 +8,7 @@ usage() {
 Usage: lab2/scripts/run-lab2.sh [all|unit|unit-python|unit-android|integration|android-device|e2e|report]
 
   all             Unit -> integration (twice) -> optional Android integration ->
-                  REAL Android app E2E (requires phone or running emulator).
+                  REAL Android app E2E (requires running Android emulator).
                   Set RUN_ANDROID_DEVICE_TESTS=1 to include device integration.
   unit            Python and Android unit tests, plus JaCoCo coverage.
   unit-python     Python unit tests only.
@@ -17,7 +17,7 @@ Usage: lab2/scripts/run-lab2.sh [all|unit|unit-python|unit-android|integration|a
   android-device  Instrumentation tests on a connected Android device; starts
                   its own PostgreSQL/API stand, without running other tests.
   e2e             Headless Android app -> Retrofit -> API -> PostgreSQL -> app.
-                  Requires a connected phone or booted emulator; never runs UI.
+                  Runs only on an Android emulator, never on a real phone or UI.
   report          Regenerate Allure HTML from existing allure-results only.
 
 Non-selected stages are marked skipped in a single-stage run.
@@ -159,9 +159,30 @@ run_integration() {
   done
 }
 
+# Collect logs before the EXIT trap removes the disposable API and PostgreSQL.
+# No server logs are needed for a successful run; diagnostics are retained on failure.
+save_server_diagnostics() {
+  local stage="$1" target="$REPORTS/diagnostics"
+  mkdir -p "$target"
+  compose logs --no-color --timestamps api > "$target/${stage}-api.log" 2>&1 || true
+  compose logs --no-color --timestamps postgres > "$target/${stage}-postgres.log" 2>&1 || true
+  echo "Server diagnostics saved to $target/${stage}-{api,postgres}.log" >&2
+  if [[ -s "$target/${stage}-api.log" ]]; then
+    echo 'Last FastAPI log lines:' >&2
+    tail -n 55 "$target/${stage}-api.log" >&2
+  fi
+}
+
 run_android_device() {
   printf '\n=== STAGE: Android integration on a connected device ===\n'
-  local host_port rc=0
+  local host_port rc=0 test_filter
+  # Optional single-method rerun for debugging a flaky test; default is the whole suite.
+  test_filter="${LAB2_ANDROID_TEST_FILTER:-com.z23u184.studymate.data.RealServerDataIntegrationTest}"
+  if [[ ! "$test_filter" =~ ^[A-Za-z0-9_.]+(#[A-Za-z0-9_]+)?$ ]]; then
+    echo "ERROR: Invalid LAB2_ANDROID_TEST_FILTER: $test_filter" >&2
+    return 2
+  fi
+  echo "Android instrumentation filter: $test_filter"
   host_port="$(compose port api 8000 | awk -F: '{print $NF}')"
   if [[ ! "$host_port" =~ ^[0-9]+$ ]]; then
     echo 'ERROR: Cannot determine published API port for adb reverse' >&2
@@ -172,9 +193,10 @@ run_android_device() {
   # Do not import stale XML results from a previous instrumentation run.
   rm -rf "$ROOT/mobile-app/data/build/outputs/androidTest-results"
   compose run --build --rm --no-deps android-tests bash -lc \
-    "adb devices | grep -Eq 'device$' && adb reverse tcp:8000 tcp:${host_port} && chmod +x ./gradlew && ./gradlew --no-daemon :data:connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=com.z23u184.studymate.data.RealServerDataIntegrationTest -Pandroid.testInstrumentationRunnerArguments.studymate.baseUrl=http://127.0.0.1:8000/" || rc=$?
+    "adb devices | grep -Eq 'device$' && adb reverse tcp:8000 tcp:${host_port} && chmod +x ./gradlew && ./gradlew --no-daemon :data:connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=${test_filter} -Pandroid.testInstrumentationRunnerArguments.studymate.baseUrl=http://127.0.0.1:8000/" || rc=$?
   copy_junit "$ROOT/mobile-app/data/build/outputs/androidTest-results" android-device
   if [[ "$rc" -ne 0 ]]; then
+    save_server_diagnostics android-device
     mark android-device failed "Android instrumentation failed or ADB device unavailable (exit $rc)"
     return 1
   fi
@@ -182,21 +204,36 @@ run_android_device() {
 
 run_e2e() {
   printf '\n=== STAGE 3: Headless Android APP -> Retrofit -> FastAPI -> PostgreSQL -> Android ===\n'
-  local host_port rc=0
+  local host_port rc=0 serial=''
+  local -a docker_env=()
   host_port="$(compose port api 8000 | awk -F: '{print $NF}')"
   if [[ ! "$host_port" =~ ^[0-9]+$ ]]; then
     mark e2e failed 'Cannot determine API host port for Android E2E'
     return 1
   fi
+
+  # E2E must NEVER install an APK on a physical phone. It selects only a booted
+  # emulator, whether on the GitHub-hosted runner or a local Linux workstation.
+  # ADB and Gradle are pinned to this serial even if a real phone is attached.
+  serial="$(adb devices | awk '$1 ~ /^emulator-[0-9]+$/ && $2 == "device" { print $1; exit }')"
+  if [[ ! "$serial" =~ ^emulator-[0-9]+$ ]]; then
+    echo 'ERROR: Headless app E2E requires a running Android emulator. A real phone is not used.' >&2
+    mark e2e failed 'No ready Android emulator detected by ADB'
+    return 1
+  fi
+  echo "E2E target: Android emulator ${serial} (physical phones excluded)"
+  docker_env=(-e "ANDROID_SERIAL=$serial")
+
   # ADB server runs on Linux host (Fedora or GitHub emulator runner). The device
   # reaches the isolated API through a device-local reverse tunnel. Android code
   # under test uses the REAL Room/Retrofit/repository/sync implementations.
   echo "Starting Android application E2E through adb reverse tcp:8000 -> tcp:${host_port}"
-  rm -rf "$ROOT/mobile-app/data/build/outputs/androidTest-results"
-  compose run --build --rm --no-deps android-tests bash -lc \
+  rm -rf "$ROOT/mobile-app/app/build/outputs/androidTest-results"
+  compose run --build --rm --no-deps "${docker_env[@]}" android-tests bash -lc \
     "adb devices | grep -Eq 'device$' && adb reverse tcp:8000 tcp:${host_port} && chmod +x ./gradlew && ./gradlew --no-daemon :app:connectedDebugAndroidTest -Plab2E2e=true -Plab2E2eBaseUrl=http://127.0.0.1:8000/ -Pandroid.testInstrumentationRunnerArguments.class=com.z23u184.studymate.app.StudyMateApplicationE2ETest" || rc=$?
   copy_junit "$ROOT/mobile-app/app/build/outputs/androidTest-results" android-e2e
   if [[ "$rc" -ne 0 ]]; then
+    save_server_diagnostics e2e
     mark e2e failed "Headless Android application E2E failed or ADB unavailable (exit $rc)"
     return 1
   fi
