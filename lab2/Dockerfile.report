@@ -15,7 +15,7 @@ RUN apt-get update \
         /usr/local/bin/allure \
     && rm -f /tmp/allure.tgz \
     && rm -rf /var/lib/apt/lists/*
-
-COPY generate-report.sh /usr/local/bin/generate-report.sh
+    
+COPY lab2/generate-report.sh /usr/local/bin/generate-report.sh
 
 CMD ["/bin/bash", "/usr/local/bin/generate-report.sh"]
