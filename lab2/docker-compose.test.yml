@@ -52,7 +52,6 @@ services:
       FILE_STORAGE_DIR: /tmp/lab2-files
       LOG_FILE_PATH: /tmp/lab2-test.log
     volumes:
-      # :z marks source files as shared between container processes under Fedora SELinux.
       - ..:/workspace:z
     depends_on:
       api:
@@ -66,10 +65,7 @@ services:
     working_dir: /workspace/mobile-app
     volumes:
       - ..:/workspace:z
-      # Locally: persistent Docker volume. GitHub-hosted: cached bind mount (LAB2_GRADLE_CACHE_MOUNT).
       - ${LAB2_GRADLE_CACHE_MOUNT:-gradle-cache}:/root/.gradle
-    # Local Fedora/Linux runner: connect to the ADB server bound on the host
-    # loopback interface, without exposing ADB on all host interfaces.
     network_mode: host
     environment:
       GRADLE_USER_HOME: /root/.gradle
@@ -100,8 +96,6 @@ services:
         condition: service_healthy
     profiles: [capture]
 
-# External prevents `docker compose down --volumes` from removing this shared cache.
-# The runner creates it on first use (`docker volume create`). Test DB/storage stay temporary.
 volumes:
   gradle-cache:
     external: true
