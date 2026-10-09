@@ -48,25 +48,60 @@ def save_json(path: Path, data: dict) -> None:
     path.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
 
 
+def load_trend(history: Path) -> list[dict]:
+    """Read Allure 2 trend data, failing visibly on malformed saved history."""
+    trend_file = history / "history-trend.json"
+    if not trend_file.exists():
+        return []
+    raw = json.loads(trend_file.read_text(encoding="utf-8"))
+    if not isinstance(raw, list):
+        raise ValueError(f"Invalid Allure 2 history trend (expected an array): {trend_file}")
+    return raw
+
+
+def previous_history(site: Path) -> Path | None:
+    """Use latest published Pages history, with archived-run recovery."""
+    primary = site / "history"
+    if (primary / "history-trend.json").is_file():
+        return primary
+
+    # Recover when an older workflow overwrote the site root but left archives.
+    archive_root = site / "runs"
+    if archive_root.is_dir():
+        runs = []
+        for folder in archive_root.iterdir():
+            parts = folder.name.split("-", 1)
+            if folder.is_dir() and len(parts) == 2 and all(x.isdecimal() for x in parts):
+                if (folder / "history" / "history-trend.json").is_file():
+                    runs.append((int(parts[0]), int(parts[1]), folder / "history"))
+        if runs:
+            runs.sort(reverse=True)
+            return runs[0][2]
+    return None
+
+
 def prepare(site: Path, reports: Path) -> None:
     results = reports / "allure-results"
     results.mkdir(parents=True, exist_ok=True)
 
-    # The test runner may have regenerated a local report or restored cached
-    # history. ONLY the last published Pages report is the authoritative source.
-    prior_results_history = results / "history"
-    prior_reports_history = reports / "history"
-    if prior_results_history.exists():
-        shutil.rmtree(prior_results_history)
-    if prior_reports_history.exists():
-        shutil.rmtree(prior_reports_history)
+    # The published Pages report is the only authoritative source of history.
+    # Allure 2 requires PREVIOUS_REPORT/history in CURRENT_RESULTS/history,
+    # i.e. no extra intermediate reports/history/history directory.
+    input_history = results / "history"
+    if input_history.exists():
+        shutil.rmtree(input_history)
+    # Keep the legacy local history cache from accidentally superseding Pages.
+    legacy_history = reports / "history" / "history"
+    if legacy_history.exists():
+        shutil.rmtree(legacy_history)
 
-    previous = site / "history"
-    if previous.is_dir():
-        shutil.copytree(previous, prior_reports_history / "history")
-        print("Restored Allure history from the previous GitHub Pages report")
+    previous = previous_history(site)
+    if previous is not None:
+        shutil.copytree(previous, input_history)
+        trend = load_trend(input_history)
+        print(f"Allure 2: restored {len(trend)} historical trend entries from {previous}")
     else:
-        print("No published history found: starting Allure trends from this run")
+        print("Allure 2: no previous Pages history; first report will start the trend")
 
     # An infrastructure failure before pytest starts can leave zero results.
     # Still publish a visible failed result rather than an empty Allure page.
@@ -88,7 +123,9 @@ def prepare(site: Path, reports: Path) -> None:
     root = base_url(os.environ["GITHUB_REPOSITORY"])
     run_name = os.environ.get("GITHUB_WORKFLOW", "StudyMate Lab 2")
     run_number = os.environ.get("GITHUB_RUN_NUMBER", "0")
-    build_order = int(os.environ["GITHUB_RUN_ID"])
+    # An Actions rerun retains GITHUB_RUN_ID; include the attempt to ensure
+    # Allure's buildOrder remains unique and trends can distinguish reruns.
+    build_order = int(os.environ["GITHUB_RUN_ID"]) * 1000 + int(os.environ.get("GITHUB_RUN_ATTEMPT", "1"))
     server = os.environ.get("GITHUB_SERVER_URL", "https://github.com").rstrip("/")
     save_json(results / "executor.json", {
         "name": "GitHub Actions",
@@ -135,6 +172,29 @@ def finish(site: Path, reports: Path) -> None:
     if not (generated / "index.html").is_file():
         raise SystemExit("Allure was not generated: lab2/reports/allure-report/index.html missing")
 
+    # Refuse to replace an existing Pages history with an empty/broken report.
+    # This is important because the gh-pages action publishes an entire tree.
+    output_history = generated / "history"
+    required = ("history.json", "history-trend.json", "duration-trend.json")
+    missing = [filename for filename in required if not (output_history / filename).is_file()]
+    if missing:
+        raise SystemExit(f"Allure 2 report has no usable history: missing {missing}")
+
+    old_history = previous_history(site)
+    old_trend = load_trend(old_history) if old_history else []
+    new_trend = load_trend(output_history)
+    new_orders = {entry.get("buildOrder") for entry in new_trend if isinstance(entry, dict)}
+    if not new_trend:
+        raise SystemExit("Allure 2 generated an empty history-trend.json; refusing to overwrite Pages")
+    if old_trend:
+        # Allure 2 keeps at most the latest 20 points. Even at capacity,
+        # at least one of the previous build orders must survive regeneration.
+        old_orders = {entry.get("buildOrder") for entry in old_trend if isinstance(entry, dict)}
+        if old_orders.isdisjoint(new_orders):
+            raise SystemExit("Allure 2 LOST the previous trend! Refusing to publish without history")
+        if len(new_trend) < min(20, len(old_trend) + 1):
+            raise SystemExit("Allure 2 history is shorter than expected; refusing to replace published history")
+
     site.mkdir(parents=True, exist_ok=True)
     run = run_key()
     runs_dir = site / "runs"
@@ -155,6 +215,8 @@ def finish(site: Path, reports: Path) -> None:
     shutil.copytree(generated, site, dirs_exist_ok=True)
     (site / ".nojekyll").touch()
     archive_index(site, base_url(os.environ["GITHUB_REPOSITORY"]))
+    print(f"Allure 2: kept {len(new_trend)} trend entries; {len(old_trend)} from prior report")
+    print(f"History saved to {site / 'history'} and {archive / 'history'}")
     print(f"Prepared site: {site} (latest + {run} + up to {MAX_ARCHIVED_RUNS} past runs)")
 
 

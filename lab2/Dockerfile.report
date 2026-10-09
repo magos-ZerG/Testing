@@ -6,4 +6,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certifi
     && ln -s "/opt/allure-${ALLURE_VERSION}/bin/allure" /usr/local/bin/allure \
     && rm -f /tmp/allure.tgz \
     && rm -rf /var/lib/apt/lists/*
-CMD ["bash", "-lc", "set -e; mkdir -p /reports/allure-results /reports/history; for file in /reports/junit/unit-TEST*.xml /reports/junit/android-device-*.xml /reports/junit/android-e2e-*.xml; do if [ -f \"$file\" ]; then cp \"$file\" /reports/allure-results/; fi; done; if [ -d /reports/history/history ]; then cp -a /reports/history/history /reports/allure-results/; fi; allure generate /reports/allure-results --clean -o /reports/allure-report; if [ -d /reports/allure-report/history ]; then cp -a /reports/allure-report/history /reports/history/; fi"]
+# Keep history in the standard Allure 2 location: allure-results/history.
+# Legacy /reports/history/history is supported for local runs predating the Pages workflow.
+COPY lab2/scripts/generate-allure-report.sh /usr/local/bin/generate-allure-report.sh
+RUN chmod +x /usr/local/bin/generate-allure-report.sh
+CMD ["/usr/local/bin/generate-allure-report.sh"]

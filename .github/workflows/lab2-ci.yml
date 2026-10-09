@@ -251,8 +251,21 @@ jobs:
           LAB2_PAGES_BASE_URL: ${{ vars.LAB2_PAGES_BASE_URL }}
         run: python3 lab2/scripts/pages_site.py prepare --site .pages-site --reports lab2/reports
 
-      - name: Generate combined Allure report
+      - name: Generate combined Allure 2 report with previous history
         run: bash lab2/scripts/run-lab2.sh report
+
+      - name: Verify Allure trend history before publishing
+        shell: bash
+        run: |
+          test -s lab2/reports/allure-report/history/history.json
+          test -s lab2/reports/allure-report/history/history-trend.json
+          python3 - <<'PYVERIFY'
+          import json
+          from pathlib import Path
+          trend = json.loads(Path('lab2/reports/allure-report/history/history-trend.json').read_text())
+          assert isinstance(trend, list) and trend, 'Allure trend has no entries'
+          print(f'Allure trend entries available for publishing: {len(trend)}')
+          PYVERIFY
 
       - name: Update Pages website and archive this run
         env:
