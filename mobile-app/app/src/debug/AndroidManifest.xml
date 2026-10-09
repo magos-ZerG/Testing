@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application>
+        <!-- Accessible only in the isolated -Plab2E2e APK; disabled otherwise. -->
+        <provider
+            android:name=".e2e.Lab2E2eBridgeProvider"
+            android:authorities="${applicationId}.lab2e2e"
+            android:enabled="${lab2E2eBridgeEnabled}"
+            android:exported="true" />
+    </application>
+</manifest>

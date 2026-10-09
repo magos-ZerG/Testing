@@ -33,7 +33,10 @@ android {
         debug {
             // An opt-in E2E APK is installed side-by-side with the user's normal app.
             // The instrumented test uses the actual StudyMateApplication and Koin graph.
-            if (providers.gradleProperty("lab2E2e").orNull == "true") {
+            val lab2E2e = providers.gradleProperty("lab2E2e").orNull == "true"
+            // Export the headless command bridge only in the opt-in disposable APK.
+            manifestPlaceholders["lab2E2eBridgeEnabled"] = lab2E2e.toString()
+            if (lab2E2e) {
                 applicationIdSuffix = ".lab2e2e"
             }
             val testBaseUrl = providers.gradleProperty("lab2E2eBaseUrl").orNull
@@ -78,15 +81,15 @@ dependencies {
     implementation(libs.koin.androidx.compose.navigation)
 
     testImplementation(libs.junit)
-    testImplementation(libs.kotlinx.coroutines.test)
+    // Only the debug-only IPC bridge invokes the real app graph; the E2E test
+    // calls that public contract and uses an independent Retrofit HTTP client.
+    implementation(libs.kotlinx.coroutines.core)
+    androidTestImplementation(libs.retrofit)
+    androidTestImplementation(libs.okhttp)
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)
     androidTestImplementation(platform(libs.androidx.compose.bom))
     androidTestImplementation(libs.androidx.compose.ui.test.junit4)
-    androidTestImplementation(libs.kotlinx.coroutines.test)
-    androidTestImplementation(libs.androidx.room.runtime)
-    androidTestImplementation(libs.kotlinx.coroutines.core)
-    androidTestImplementation(libs.kotlinx.coroutines.test)
     debugImplementation(libs.androidx.compose.ui.tooling)
     debugImplementation(libs.androidx.compose.ui.test.manifest)
 }
