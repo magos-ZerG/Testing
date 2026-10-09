@@ -1,20 +1,17 @@
-name: StudyMate Lab 2 - CI
+name: lab_02
 
 on:
   push:
+    branches: [main]
   pull_request:
   workflow_dispatch:
 
 permissions:
   contents: read
 
-concurrency:
-  group: lab2-ci-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
-
 jobs:
   lab2:
-    name: Unit -> Integration -> E2E
+    name: Unit + Integration + E2E
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     steps:
@@ -25,38 +22,95 @@ jobs:
         run: |
           docker version
           docker compose version
-          python3 --version
 
-      # History is restored before lab2/scripts/run-lab2.sh, which preserves it.
-      - name: Restore Allure history
-        uses: actions/cache/restore@v4
-        with:
-          path: lab2/reports/history
-          key: lab2-allure-${{ github.ref_name }}-${{ github.run_id }}
-          restore-keys: |
-            lab2-allure-${{ github.ref_name }}-
-
-      # The single script keeps the required order and produces explicit
-      # skipped markers for stages after a failure.
-      - name: Unit -> Integration -> E2E (isolated Docker stand)
+      - name: Run Lab 2 in disposable Docker containers
         env:
           RUN_ANDROID_DEVICE_TESTS: '0'
         run: bash lab2/scripts/run-lab2.sh all
 
-      - name: Save Allure history
-        if: ${{ always() }}
-        uses: actions/cache/save@v4
-        with:
-          path: lab2/reports/history
-          key: lab2-allure-${{ github.ref_name }}-${{ github.run_id }}
-
-      - name: Upload test reports (including on failure)
+      - name: Upload raw test results
         if: ${{ always() }}
         uses: actions/upload-artifact@v4
         with:
-          name: lab2-reports-${{ github.run_id }}
+          name: lab2-reports-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
             lab2/reports/
             mobile-app/data/build/reports/jacoco/lab/
           retention-days: 30
           if-no-files-found: warn
+
+  publish:
+    name: Allure history + GitHub Pages
+    needs: [lab2]
+    if: ${{ always() && github.event_name != 'pull_request' && github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    concurrency:
+      group: studymate-lab2-pages
+      cancel-in-progress: false
+    permissions:
+      contents: write
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download test results
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: lab2-reports-${{ github.run_id }}-${{ github.run_attempt }}
+          path: .
+
+      - name: Restore previously published report from gh-pages
+        shell: bash
+        run: |
+          mkdir -p .pages-site
+          if git ls-remote --exit-code origin refs/heads/gh-pages >/dev/null 2>&1; then
+            git fetch --no-tags origin gh-pages
+            git archive FETCH_HEAD | tar -xf - -C .pages-site
+          else
+            echo 'First Pages publication: no gh-pages branch yet'
+          fi
+
+      - name: Merge published history into current test results
+        env:
+          LAB2_TEST_CONCLUSION: ${{ needs.lab2.result }}
+          LAB2_PAGES_BASE_URL: ${{ vars.LAB2_PAGES_BASE_URL }}
+        run: python3 lab2/scripts/pages_site.py prepare --site .pages-site --reports lab2/reports
+
+      - name: Regenerate Allure 2 with previous-run trends
+        run: bash lab2/scripts/run-lab2.sh report
+
+      - name: Create latest site and archive this run
+        env:
+          LAB2_PAGES_BASE_URL: ${{ vars.LAB2_PAGES_BASE_URL }}
+        run: python3 lab2/scripts/pages_site.py finish --site .pages-site --reports lab2/reports
+
+      - name: Store published reports permanently in gh-pages branch
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_branch: gh-pages
+          publish_dir: .pages-site
+          force_orphan: true
+
+      - name: Upload website for official GitHub Pages deployment
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: .pages-site
+
+      - name: Deploy website
+        id: deployment
+        uses: actions/deploy-pages@v4
+
+      - name: Show Pages URL
+        if: ${{ success() }}
+        env:
+          URL: ${{ steps.deployment.outputs.page_url }}
+        run: |
+          echo "Allure: $URL"
+          echo "### [Open the latest StudyMate Allure report]($URL)" >> "$GITHUB_STEP_SUMMARY"
+          echo "[Previous runs](${URL}runs/)" >> "$GITHUB_STEP_SUMMARY"

@@ -1,7 +1,5 @@
-name: StudyMate Lab 2 - Full CI with physical Android
+name: lab_02_android
 
-# Manual by design: it must not run unless the Fedora machine is on
-# and the phone is physically connected and authorized over ADB.
 on:
   workflow_dispatch:
 
@@ -10,7 +8,7 @@ permissions:
 
 jobs:
   lab2-physical-device:
-    name: Unit -> Integration -> Android device -> E2E
+    name: Unit + Integration + Android device + E2E
     runs-on: [self-hosted, linux, x64, android-device]
     timeout-minutes: 120
     steps:
@@ -25,18 +23,94 @@ jobs:
           adb devices -l
           adb devices | grep -Eq '[[:space:]]device$' || { echo 'No authorized Android device detected'; exit 1; }
 
-      - name: Run full lab on the physical device
+      - name: Run full Lab 2 on physical device
         env:
           RUN_ANDROID_DEVICE_TESTS: '1'
         run: bash lab2/scripts/run-lab2.sh all
 
-      - name: Upload test reports (including on failure)
+      - name: Upload raw test results (even when tests fail)
         if: ${{ always() }}
         uses: actions/upload-artifact@v4
         with:
-          name: lab2-android-reports-${{ github.run_id }}
+          name: lab2-android-reports-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
             lab2/reports/
             mobile-app/data/build/reports/jacoco/lab/
           retention-days: 30
           if-no-files-found: warn
+
+  publish:
+    name: Allure history + GitHub Pages
+    needs: [lab2-physical-device]
+    if: ${{ always() && github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    concurrency:
+      group: studymate-lab2-pages
+      cancel-in-progress: false
+    permissions:
+      contents: write
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download Android + server test results
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: lab2-android-reports-${{ github.run_id }}-${{ github.run_attempt }}
+          path: .
+
+      - name: Restore previously published report from gh-pages
+        shell: bash
+        run: |
+          mkdir -p .pages-site
+          if git ls-remote --exit-code origin refs/heads/gh-pages >/dev/null 2>&1; then
+            git fetch --no-tags origin gh-pages
+            git archive FETCH_HEAD | tar -xf - -C .pages-site
+          else
+            echo 'First Pages publication: no gh-pages branch yet'
+          fi
+
+      - name: Merge published history into current test results
+        env:
+          LAB2_TEST_CONCLUSION: ${{ needs.lab2-physical-device.result }}
+          LAB2_PAGES_BASE_URL: ${{ vars.LAB2_PAGES_BASE_URL }}
+        run: python3 lab2/scripts/pages_site.py prepare --site .pages-site --reports lab2/reports
+
+      - name: Regenerate Allure 2 with previous-run trends
+        run: bash lab2/scripts/run-lab2.sh report
+
+      - name: Create latest site and archive this run
+        env:
+          LAB2_PAGES_BASE_URL: ${{ vars.LAB2_PAGES_BASE_URL }}
+        run: python3 lab2/scripts/pages_site.py finish --site .pages-site --reports lab2/reports
+
+      - name: Store published reports permanently in gh-pages branch
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_branch: gh-pages
+          publish_dir: .pages-site
+          force_orphan: true
+
+      - name: Upload website for official GitHub Pages deployment
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: .pages-site
+
+      - name: Deploy website
+        id: deployment
+        uses: actions/deploy-pages@v4
+
+      - name: Show Pages URL
+        if: ${{ success() }}
+        env:
+          URL: ${{ steps.deployment.outputs.page_url }}
+        run: |
+          echo "Allure: $URL"
+          echo "### [Open the latest StudyMate Allure report]($URL)" >> "$GITHUB_STEP_SUMMARY"
+          echo "[Previous runs](${URL}runs/)" >> "$GITHUB_STEP_SUMMARY"

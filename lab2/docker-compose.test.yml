@@ -1,4 +1,3 @@
-# Isolated per run through COMPOSE_PROJECT_NAME; only the Gradle download/cache volume is persistent.
 services:
   postgres:
     image: postgres:17-alpine
@@ -52,7 +51,6 @@ services:
       FILE_STORAGE_DIR: /tmp/lab2-files
       LOG_FILE_PATH: /tmp/lab2-test.log
     volumes:
-      # :z marks source files as shared between container processes under Fedora SELinux.
       - ..:/workspace:z
     depends_on:
       api:
@@ -66,7 +64,6 @@ services:
     working_dir: /workspace/mobile-app
     volumes:
       - ..:/workspace:z
-      # Share Gradle distributions/dependencies between otherwise isolated test runs.
       - gradle-cache:/root/.gradle
     network_mode: host
     environment:
@@ -98,8 +95,6 @@ services:
         condition: service_healthy
     profiles: [capture]
 
-# External prevents `docker compose down --volumes` from removing this shared cache.
-# The runner creates it on first use (`docker volume create`). Test DB/storage stay temporary.
 volumes:
   gradle-cache:
     external: true

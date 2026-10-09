@@ -1,22 +1,23 @@
-# Gradle in the Android SDK image runs on its default (modern) JDK.
-# The :domain module separately requires a Java 11 compiler toolchain.
-# Bundle JDK 11 into the test image to avoid an unreliable Foojay download.
 FROM eclipse-temurin:11-jdk AS jdk11
-
 FROM ghcr.io/cirruslabs/android-sdk:36
 
-COPY --from=jdk11 /opt/java/openjdk /usr/lib/jvm/temurin-11
+COPY --from=jdk11 \
+    /opt/java/openjdk \
+    /usr/lib/jvm/temurin-11
 
-# Do NOT change JAVA_HOME: Gradle 9 must run on Java 17+.
-# Make the Java 11 toolchain discoverable and fail fast rather than downloading it.
 ENV JDK11_HOME=/usr/lib/jvm/temurin-11
-ENV GRADLE_OPTS="-Dorg.gradle.java.installations.paths=/usr/lib/jvm/temurin-11 -Dorg.gradle.java.installations.auto-download=false"
 
-# Original app sets compileSdk release(36) with minorApiLevel 1, requiring 36.1.
+ENV GRADLE_OPTS="\
+    -Dorg.gradle.java.installations.paths=/usr/lib/jvm/temurin-11 \
+    -Dorg.gradle.java.installations.auto-download=false"
+
 RUN /usr/lib/jvm/temurin-11/bin/java -version \
     && /usr/lib/jvm/temurin-11/bin/javac -version \
     && yes | sdkmanager --install "platforms;android-36.1"
 
 WORKDIR /workspace/mobile-app
-# CI supplies an already checked-out repository as the /workspace bind mount.
-CMD ["bash", "-lc", "chmod +x ./gradlew && ./gradlew --no-daemon :data:labCoverage"]
+
+CMD ["bash", "-lc", "\
+    chmod +x ./gradlew && \
+    ./gradlew --no-daemon :data:labCoverage \
+"]

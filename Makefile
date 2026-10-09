@@ -1,5 +1,3 @@
-# StudyMate Lab 2 - convenient entry points. Run from the project root.
-# If Docker requires root permissions on Fedora, use `sudo make <target>`.
 SHELL := /bin/bash
 .DEFAULT_GOAL := help
 
