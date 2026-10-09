@@ -1,3 +1,5 @@
+# StudyMate Lab 2 - convenient entry points. Run from the project root.
+# If Docker requires root permissions on Fedora, use `sudo make <target>`.
 SHELL := /bin/bash
 .DEFAULT_GOAL := help
 
@@ -13,8 +15,8 @@ help:
 	  '  make unit           - Python + Android unit tests, JaCoCo' \
 	  '  make integration    - SQL integration tests (2 repeats)' \
 	  '  make android        - Android instrumented tests on a phone' \
-	  '  make e2e            - HTTP E2E against fresh API/PostgreSQL' \
-	  '  make all            - unit -> integration -> E2E' \
+	  '  make e2e            - headless Android app E2E on connected phone/emulator' \
+	  '  make all            - unit -> integration -> Android app E2E (device required)' \
 	  '  make all-android    - full cycle including tests on a phone' \
 	  '  make report         - regenerate Allure report (Docker/sudo allowed)' \
 	  '  make report-open    - serve report over HTTP and open browser (no sudo)' \

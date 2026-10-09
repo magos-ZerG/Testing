@@ -31,7 +31,14 @@ android {
 
     buildTypes {
         debug {
-            buildConfigField("String", "SERVER_BASE_URL", "\"http://10.0.2.2:8000/\"")
+            // An opt-in E2E APK is installed side-by-side with the user's normal app.
+            // The instrumented test uses the actual StudyMateApplication and Koin graph.
+            if (providers.gradleProperty("lab2E2e").orNull == "true") {
+                applicationIdSuffix = ".lab2e2e"
+            }
+            val testBaseUrl = providers.gradleProperty("lab2E2eBaseUrl").orNull
+                ?: "http://10.0.2.2:8000/"
+            buildConfigField("String", "SERVER_BASE_URL", "\"${testBaseUrl}\"")
         }
         release {
             isMinifyEnabled = false

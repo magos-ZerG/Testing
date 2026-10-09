@@ -160,21 +160,29 @@ jobs:
           if-no-files-found: warn
           retention-days: 30
   e2e:
-    name: "E2E / API + database (3 tests)"
-    runs-on: ubuntu-24.04
-    timeout-minutes: 40
+    name: "Headless Android app E2E / physical device + API + PostgreSQL"
+    runs-on: [self-hosted, linux, x64, android-device]
+    timeout-minutes: 100
     needs: [android-device]
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Run all e2e tests in one Docker stage
+      - name: Verify Docker and authorized physical Android phone
+        run: |
+          docker info >/dev/null
+          docker compose version
+          adb start-server
+          adb devices -l
+          adb devices | grep -Eq '[[:space:]]device$'
+
+      - name: Run Android app E2E through real backend (no UI)
         id: tests
         env:
           LAB2_CI_STAGE: '1'
         run: bash lab2/scripts/run-lab2.sh e2e
 
-      - name: Record stage status for Allure aggregation
+      - name: Record E2E stage status for Allure aggregation
         if: ${{ always() }}
         env:
           STAGE_OUTCOME: ${{ steps.tests.outcome }}
@@ -182,7 +190,7 @@ jobs:
           mkdir -p lab2/reports/ci-stage-results
           printf '%s\n' "$STAGE_OUTCOME" > lab2/reports/ci-stage-results/e2e.txt
 
-      - name: Upload e2e test results
+      - name: Upload Android E2E JUnit and Allure results
         if: ${{ always() }}
         uses: actions/upload-artifact@v4
         with:
