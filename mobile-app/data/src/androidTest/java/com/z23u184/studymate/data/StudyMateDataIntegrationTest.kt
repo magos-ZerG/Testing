@@ -73,6 +73,7 @@ import java.util.UUID
 import java.util.concurrent.TimeUnit
 import kotlin.time.ExperimentalTime
 import kotlin.time.Instant
+import kotlinx.coroutines.test.runTest
 
 @RunWith(AndroidJUnit4::class)
 class RealServerDataIntegrationTest {
@@ -112,7 +113,7 @@ class RealServerDataIntegrationTest {
     }
 
     @Test
-    fun login_initialSync_pullsRemoteTopic_and_logoutClearsSession() = runBlocking {
+    fun login_initialSync_pullsRemoteTopic_and_logoutClearsSession() = runTest {
         val credentials = TestCredentials.unique()
 
         runtime.authSessionManager.register(credentials.email, credentials.password)
@@ -155,7 +156,7 @@ class RealServerDataIntegrationTest {
     }
 
     @Test
-    fun createTopic_useCase_savesLocally_andPushesToRealServer() = runBlocking {
+    fun createTopic_useCase_savesLocally_andPushesToRealServer() = runTest {
         val credentials = TestCredentials.unique()
         runtime.authSessionManager.register(credentials.email, credentials.password)
         runtime.authSessionManager.login(credentials.email, credentials.password)
@@ -179,7 +180,7 @@ class RealServerDataIntegrationTest {
     }
 
     @Test
-    fun createUpdateDeleteTask_flow_syncsLocalAndRemoteState() = runBlocking {
+    fun createUpdateDeleteTask_flow_syncsLocalAndRemoteState() = runTest {
         val credentials = TestCredentials.unique()
         runtime.authSessionManager.register(credentials.email, credentials.password)
         runtime.authSessionManager.login(credentials.email, credentials.password)
