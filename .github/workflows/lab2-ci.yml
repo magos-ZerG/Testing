@@ -10,59 +10,234 @@ permissions:
   contents: read
 
 jobs:
-  lab2:
-    name: Unit + Integration + E2E
+  discover:
+    name: Discover individual tests
     runs-on: ubuntu-24.04
-    timeout-minutes: 90
+    outputs:
+      unit_python: ${{ steps.tests.outputs.unit_python }}
+      unit_android: ${{ steps.tests.outputs.unit_android }}
+      integration: ${{ steps.tests.outputs.integration }}
+      e2e: ${{ steps.tests.outputs.e2e }}
+      device: ${{ steps.tests.outputs.device }}
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+      - name: Enumerate each test as its own job
+        id: tests
+        run: python3 lab2/scripts/ci_catalog.py --github-output "$GITHUB_OUTPUT" --summary
 
-      - name: Check Docker and Compose
-        run: |
-          docker version
-          docker compose version
-
-      - name: Run Lab 2 in disposable Docker containers
+  unit-python:
+    name: "Unit / Python · ${{ matrix.title }}"
+    needs: [discover]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix:
+        include: ${{ fromJSON(needs.discover.outputs.unit_python) }}
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run the single test in Docker
+        id: test
         env:
-          RUN_ANDROID_DEVICE_TESTS: '0'
-        run: bash lab2/scripts/run-lab2.sh all
+          TEST_KIND: python-unit
+          CASE_ID: ${{ matrix.id }}
+          TEST_SELECTOR: ${{ matrix.selector }}
+        run: bash lab2/scripts/ci_run_one.sh "$TEST_KIND" "$CASE_ID" "$TEST_SELECTOR"
 
-      - name: Upload raw test results
+      - name: Record outcome and create fallback test report
+        if: ${{ always() }}
+        env:
+          TEST_KIND: python-unit
+          CASE_ID: ${{ matrix.id }}
+          TEST_SELECTOR: ${{ matrix.selector }}
+          TEST_OUTCOME: ${{ steps.test.outcome }}
+        run: |
+          python3 lab2/scripts/ci_case_reports.py record \
+            --kind "$TEST_KIND" --id "$CASE_ID" --selector "$TEST_SELECTOR" --outcome "$TEST_OUTCOME"
+
+      - name: Upload this test's results
         if: ${{ always() }}
         uses: actions/upload-artifact@v4
         with:
-          name: lab2-reports-${{ github.run_id }}-${{ github.run_attempt }}
-          path: |
-            lab2/reports/
-            mobile-app/data/build/reports/jacoco/lab/
+          name: lab2-case-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.id }}
+          path: lab2/reports/
+          if-no-files-found: error
           retention-days: 30
-          if-no-files-found: warn
 
-  publish:
-    name: Allure history + GitHub Pages
-    needs: [lab2]
+  unit-android:
+    name: "Unit / Kotlin · ${{ matrix.title }}"
+    needs: [discover]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix:
+        include: ${{ fromJSON(needs.discover.outputs.unit_android) }}
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run the single test in Docker
+        id: test
+        env:
+          TEST_KIND: android-unit
+          CASE_ID: ${{ matrix.id }}
+          TEST_SELECTOR: ${{ matrix.selector }}
+        run: bash lab2/scripts/ci_run_one.sh "$TEST_KIND" "$CASE_ID" "$TEST_SELECTOR"
+
+      - name: Record outcome and create fallback test report
+        if: ${{ always() }}
+        env:
+          TEST_KIND: android-unit
+          CASE_ID: ${{ matrix.id }}
+          TEST_SELECTOR: ${{ matrix.selector }}
+          TEST_OUTCOME: ${{ steps.test.outcome }}
+        run: |
+          python3 lab2/scripts/ci_case_reports.py record \
+            --kind "$TEST_KIND" --id "$CASE_ID" --selector "$TEST_SELECTOR" --outcome "$TEST_OUTCOME"
+
+      - name: Upload this test's results
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: lab2-case-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.id }}
+          path: lab2/reports/
+          if-no-files-found: error
+          retention-days: 30
+
+  integration:
+    name: "Integration / PostgreSQL (twice) · ${{ matrix.title }}"
+    needs: [discover, unit-python, unit-android]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix:
+        include: ${{ fromJSON(needs.discover.outputs.integration) }}
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run the single test in Docker
+        id: test
+        env:
+          TEST_KIND: integration
+          CASE_ID: ${{ matrix.id }}
+          TEST_SELECTOR: ${{ matrix.selector }}
+        run: bash lab2/scripts/ci_run_one.sh "$TEST_KIND" "$CASE_ID" "$TEST_SELECTOR"
+
+      - name: Record outcome and create fallback test report
+        if: ${{ always() }}
+        env:
+          TEST_KIND: integration
+          CASE_ID: ${{ matrix.id }}
+          TEST_SELECTOR: ${{ matrix.selector }}
+          TEST_OUTCOME: ${{ steps.test.outcome }}
+        run: |
+          python3 lab2/scripts/ci_case_reports.py record \
+            --kind "$TEST_KIND" --id "$CASE_ID" --selector "$TEST_SELECTOR" --outcome "$TEST_OUTCOME"
+
+      - name: Upload this test's results
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: lab2-case-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.id }}
+          path: lab2/reports/
+          if-no-files-found: error
+          retention-days: 30
+
+  e2e:
+    name: "E2E / HTTP · ${{ matrix.title }}"
+    needs: [discover, integration]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix:
+        include: ${{ fromJSON(needs.discover.outputs.e2e) }}
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run the single test in Docker
+        id: test
+        env:
+          TEST_KIND: e2e
+          CASE_ID: ${{ matrix.id }}
+          TEST_SELECTOR: ${{ matrix.selector }}
+        run: bash lab2/scripts/ci_run_one.sh "$TEST_KIND" "$CASE_ID" "$TEST_SELECTOR"
+
+      - name: Record outcome and create fallback test report
+        if: ${{ always() }}
+        env:
+          TEST_KIND: e2e
+          CASE_ID: ${{ matrix.id }}
+          TEST_SELECTOR: ${{ matrix.selector }}
+          TEST_OUTCOME: ${{ steps.test.outcome }}
+        run: |
+          python3 lab2/scripts/ci_case_reports.py record \
+            --kind "$TEST_KIND" --id "$CASE_ID" --selector "$TEST_SELECTOR" --outcome "$TEST_OUTCOME"
+
+      - name: Upload this test's results
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: lab2-case-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.id }}
+          path: lab2/reports/
+          if-no-files-found: error
+          retention-days: 30
+
+  prepare-pages:
+    name: Collect results + Allure history + Pages artifact
+    needs: [discover, unit-python, unit-android, integration, e2e]
     if: ${{ always() && github.event_name != 'pull_request' && github.ref == 'refs/heads/main' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 35
     concurrency:
-      group: studymate-lab2-pages
+      group: studymate-lab2-pages-history
       cancel-in-progress: false
     permissions:
       contents: write
-      pages: write
-      id-token: write
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
+      actions: read
     steps:
       - uses: actions/checkout@v4
-      - name: Download test results
-        continue-on-error: true
+
+      - name: Check which test-result artifacts actually exist
+        id: artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          prefix="lab2-case-${{ github.run_id }}-${{ github.run_attempt }}-"
+          if ! count="$(gh api "/repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/artifacts?per_page=100" \
+            --jq ".artifacts | map(select(.name | startswith(\"$prefix\"))) | length")"; then
+            echo 'Warning: artifact API call failed; preparing failure diagnostics' >&2
+            count=0
+          fi
+          echo "Found $count individual test artifacts"
+          if [[ "$count" -gt 0 ]]; then echo 'found=true' >> "$GITHUB_OUTPUT"; else echo 'found=false' >> "$GITHUB_OUTPUT"; fi
+
+      - name: Download available test results (never request a nonexistent exact name)
+        if: ${{ steps.artifacts.outputs.found == 'true' }}
         uses: actions/download-artifact@v4
         with:
-          name: lab2-reports-${{ github.run_id }}-${{ github.run_attempt }}
-          path: .
+          pattern: lab2-case-${{ github.run_id }}-${{ github.run_attempt }}-*
+          merge-multiple: true
+          path: lab2/reports/
+
+      - name: Include skipped tests and infrastructure failures in Allure
+        env:
+          CI_STATUS_UNIT_PYTHON: ${{ needs.unit-python.result }}
+          CI_STATUS_UNIT_ANDROID: ${{ needs.unit-android.result }}
+          CI_STATUS_INTEGRATION: ${{ needs.integration.result }}
+          CI_STATUS_E2E: ${{ needs.e2e.result }}
+        run: python3 lab2/scripts/ci_case_reports.py aggregate
 
       - name: Restore previously published report from gh-pages
         shell: bash
@@ -75,21 +250,21 @@ jobs:
             echo 'First Pages publication: no gh-pages branch yet'
           fi
 
-      - name: Merge published history into current test results
+      - name: Merge historical trends into current results
         env:
-          LAB2_TEST_CONCLUSION: ${{ needs.lab2.result }}
+          LAB2_TEST_CONCLUSION: ${{ needs.e2e.result == 'success' && 'success' || 'failure' }}
           LAB2_PAGES_BASE_URL: ${{ vars.LAB2_PAGES_BASE_URL }}
         run: python3 lab2/scripts/pages_site.py prepare --site .pages-site --reports lab2/reports
 
-      - name: Regenerate Allure 2 with previous-run trends
+      - name: Build Allure 2 HTML in its Docker container
         run: bash lab2/scripts/run-lab2.sh report
 
-      - name: Create latest site and archive this run
+      - name: Save current report and the previous runs
         env:
           LAB2_PAGES_BASE_URL: ${{ vars.LAB2_PAGES_BASE_URL }}
         run: python3 lab2/scripts/pages_site.py finish --site .pages-site --reports lab2/reports
 
-      - name: Store published reports permanently in gh-pages branch
+      - name: Persist Pages history in gh-pages branch
         uses: peaceiris/actions-gh-pages@v4
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
@@ -97,20 +272,37 @@ jobs:
           publish_dir: .pages-site
           force_orphan: true
 
-      - name: Upload website for official GitHub Pages deployment
+      - name: Upload GitHub Pages website artifact
         uses: actions/upload-pages-artifact@v3
         with:
           path: .pages-site
 
-      - name: Deploy website
+      - name: Upload merged raw results for debugging
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: lab2-collected-${{ github.run_id }}-${{ github.run_attempt }}
+          path: lab2/reports/
+          if-no-files-found: warn
+          retention-days: 30
+
+  deploy-pages:
+    name: Deploy Allure to GitHub Pages
+    needs: [prepare-pages]
+    runs-on: ubuntu-24.04
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Publish site
         id: deployment
         uses: actions/deploy-pages@v4
-
-      - name: Show Pages URL
-        if: ${{ success() }}
+      - name: Show report URL
         env:
           URL: ${{ steps.deployment.outputs.page_url }}
         run: |
-          echo "Allure: $URL"
-          echo "### [Open the latest StudyMate Allure report]($URL)" >> "$GITHUB_STEP_SUMMARY"
-          echo "[Previous runs](${URL}runs/)" >> "$GITHUB_STEP_SUMMARY"
+          echo "### [StudyMate Allure report]($URL)" >> "$GITHUB_STEP_SUMMARY"
+          echo "[Previous runs](${{ steps.deployment.outputs.page_url }}runs/)" >> "$GITHUB_STEP_SUMMARY"
