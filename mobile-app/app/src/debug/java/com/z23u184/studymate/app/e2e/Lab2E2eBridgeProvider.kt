@@ -22,13 +22,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runBlocking
 import org.koin.core.context.GlobalContext
 
-/**
- * Debug-only black-box command endpoint. It is DISABLED in normal debug APKs,
- * absent from release APKs, and enabled only with -Plab2E2e=true.
- *
- * E2E clients know only operation names and primitive Bundle values: no
- * dependency on the application's Koin graph, Room, or domain types.
- */
 class Lab2E2eBridgeProvider : ContentProvider() {
     override fun onCreate(): Boolean = true
 

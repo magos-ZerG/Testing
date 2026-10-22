@@ -16,6 +16,7 @@ ROOT = Path(__file__).resolve().parents[2]
 REPORTS = ROOT / 'lab2' / 'reports'
 
 STAGES = {
+    'build': 'CI_STATUS_BUILD',
     'unit-python': 'CI_STATUS_UNIT_PYTHON',
     'unit-android': 'CI_STATUS_UNIT_ANDROID',
     'integration': 'CI_STATUS_INTEGRATION',

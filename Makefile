@@ -7,16 +7,17 @@ LAB2_SCRIPT := lab2/scripts/run-lab2.sh
 LAB2_GRADLE_CACHE_VOLUME ?= studymate_lab2_gradle_cache
 export LAB2_GRADLE_CACHE_VOLUME
 
-.PHONY: help all all-android unit integration android android-device e2e report report-open report-serve capture cache-info cache-clear
+.PHONY: help all all-android build unit integration android android-device e2e report report-open report-serve capture cache-info cache-clear
 
 help:
 	@printf '%s\n' \
 	  'StudyMate Lab 2 targets:' \
+	  '  make build          - assemble app + E2E test APK (separate build stage)' \
 	  '  make unit           - Python + Android unit tests, JaCoCo' \
 	  '  make integration    - SQL integration tests (2 repeats)' \
 	  '  make android        - Android instrumented tests on a phone' \
-	  '  make e2e            - headless Android app E2E on connected phone/emulator' \
-	  '  make all            - unit -> integration -> Android app E2E (device required)' \
+	  '  make e2e            - emulator-only Android E2E + actual HTTP PCAP'  \
+	  '  make all            - unit -> integration -> Android app E2E (emulator required)' \
 	  '  make all-android    - full cycle including tests on a phone' \
 	  '  make report         - regenerate Allure report (Docker/sudo allowed)' \
 	  '  make report-open    - serve report over HTTP and open browser (no sudo)' \
@@ -32,6 +33,9 @@ all:
 
 all-android:
 	@RUN_ANDROID_DEVICE_TESTS=1 bash "$(LAB2_SCRIPT)" all
+
+build:
+	@bash "$(LAB2_SCRIPT)" build
 
 unit:
 	@bash "$(LAB2_SCRIPT)" unit

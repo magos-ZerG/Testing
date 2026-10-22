@@ -5,11 +5,12 @@ set -Eeuo pipefail
 
 usage() {
   cat <<'USAGE'
-Usage: lab2/scripts/run-lab2.sh [all|unit|unit-python|unit-android|integration|android-device|e2e|report]
+Usage: lab2/scripts/run-lab2.sh [all|build|unit|unit-python|unit-android|integration|android-device|e2e|report]
 
   all             Unit -> integration (twice) -> optional Android integration ->
                   REAL Android app E2E (requires running Android emulator).
                   Set RUN_ANDROID_DEVICE_TESTS=1 to include device integration.
+  build           Assemble the disposable Android app and its instrumentation APK.
   unit            Python and Android unit tests, plus JaCoCo coverage.
   unit-python     Python unit tests only.
   unit-android    Kotlin/Robolectric unit tests and JaCoCo only.
@@ -17,7 +18,8 @@ Usage: lab2/scripts/run-lab2.sh [all|unit|unit-python|unit-android|integration|a
   android-device  Instrumentation tests on a connected Android device; starts
                   its own PostgreSQL/API stand, without running other tests.
   e2e             Headless Android app -> Retrofit -> API -> PostgreSQL -> app.
-                  Runs only on an Android emulator, never on a real phone or UI.
+                  Emulator only. Saves real Android E2E HTTP traffic to PCAP.
+                  LAB2_E2E_PREBUILT_APKS=1 installs artifacts from build stage.
   report          Regenerate Allure HTML from existing allure-results only.
 
 Non-selected stages are marked skipped in a single-stage run.
@@ -35,7 +37,7 @@ if (( $# > 1 )); then
 fi
 MODE="${1:-all}"
 case "$MODE" in
-  all|unit|unit-python|unit-android|integration|android-device|e2e|report) ;;
+  all|build|unit|unit-python|unit-android|integration|android-device|e2e|report) ;;
   *) printf 'Unknown test stage: %s\n\n' "$MODE" >&2; usage >&2; exit 2 ;;
 esac
 
@@ -99,7 +101,7 @@ mark_not_selected() {
   # skipped inside each job would make the combined Allure report misleading.
   if [[ "${LAB2_CI_STAGE:-0}" == 1 ]]; then return 0; fi
   local selected="$1" stage
-  for stage in unit integration android-device e2e; do
+  for stage in build unit integration android-device e2e; do
     if [[ "$stage" != "$selected" ]]; then
       mark "$stage" skipped "Not selected: running only $selected"
     fi
@@ -111,6 +113,23 @@ start_stand() {
     echo 'ERROR: Failed to start isolated PostgreSQL + FastAPI test stand' >&2
     return 1
   fi
+}
+
+run_build() {
+  printf '\n=== BUILD STAGE: Android E2E APK + instrumentation APK ===\n'
+  # Exactly the same optional applicationId suffix and bridge as the E2E test.
+  if ! compose run --build --rm --no-deps android-tests bash -lc \
+    'chmod +x ./gradlew && ./gradlew --no-daemon :app:assembleDebug :app:assembleDebugAndroidTest -Plab2E2e=true -Plab2E2eBaseUrl=http://127.0.0.1:8000/'; then
+    mark build failed 'E2E app/test APK compilation failed'
+    return 1
+  fi
+  local dir="$ROOT/mobile-app/app/build/outputs/apk"
+  test -s "$dir/debug/app-debug.apk" && test -s "$dir/androidTest/debug/app-debug-androidTest.apk" || {
+    mark build failed 'Missing E2E APKs after Gradle assemble'
+    return 1
+  }
+  echo "APK ready: $dir/debug/app-debug.apk"
+  echo "Test APK ready: $dir/androidTest/debug/app-debug-androidTest.apk"
 }
 
 run_unit_python() {
@@ -203,8 +222,8 @@ run_android_device() {
 }
 
 run_e2e() {
-  printf '\n=== STAGE 3: Headless Android APP -> Retrofit -> FastAPI -> PostgreSQL -> Android ===\n'
-  local host_port rc=0 serial=''
+  printf '\n=== E2E: Android APP -> FastAPI -> PostgreSQL -> Android (real traffic capture) ===\n'
+  local host_port rc=0 serial='' android_rc=0
   local -a docker_env=()
   host_port="$(compose port api 8000 | awk -F: '{print $NF}')"
   if [[ ! "$host_port" =~ ^[0-9]+$ ]]; then
@@ -212,34 +231,83 @@ run_e2e() {
     return 1
   fi
 
-  # E2E must NEVER install an APK on a physical phone. It selects only a booted
-  # emulator, whether on the GitHub-hosted runner or a local Linux workstation.
-  # ADB and Gradle are pinned to this serial even if a real phone is attached.
+  # Fail before touching a physical phone. Use exactly one booted emulator.
   serial="$(adb devices | awk '$1 ~ /^emulator-[0-9]+$/ && $2 == "device" { print $1; exit }')"
   if [[ ! "$serial" =~ ^emulator-[0-9]+$ ]]; then
-    echo 'ERROR: Headless app E2E requires a running Android emulator. A real phone is not used.' >&2
-    mark e2e failed 'No ready Android emulator detected by ADB'
+    mark e2e failed 'No ready Android emulator detected by ADB (real phones not supported)'
     return 1
   fi
-  echo "E2E target: Android emulator ${serial} (physical phones excluded)"
+  echo "E2E target: $serial. API is mapped to host port $host_port"
   docker_env=(-e "ANDROID_SERIAL=$serial")
 
-  # ADB server runs on Linux host (Fedora or GitHub emulator runner). The device
-  # reaches the isolated API through a device-local reverse tunnel. Android code
-  # under test uses the REAL Room/Retrofit/repository/sync implementations.
-  echo "Starting Android application E2E through adb reverse tcp:8000 -> tcp:${host_port}"
-  rm -rf "$ROOT/mobile-app/app/build/outputs/androidTest-results"
-  compose run --build --rm --no-deps "${docker_env[@]}" android-tests bash -lc \
-    "adb devices | grep -Eq 'device$' && adb reverse tcp:8000 tcp:${host_port} && chmod +x ./gradlew && ./gradlew --no-daemon :app:connectedDebugAndroidTest -Plab2E2e=true -Plab2E2eBaseUrl=http://127.0.0.1:8000/ -Pandroid.testInstrumentationRunnerArguments.class=com.z23u184.studymate.app.StudyMateApplicationE2ETest" || rc=$?
-  copy_junit "$ROOT/mobile-app/app/build/outputs/androidTest-results" android-e2e
-  if [[ "$rc" -ne 0 ]]; then
+  # The capture container shares API network namespace. Unlike replay-http.sh,
+  # this capture includes requests from the actual installed Android APK.
+  rm -f "$REPORTS/lab2-e2e.pcap"
+  if ! compose up --build -d capture; then
+    mark e2e failed 'Could not start tcpdump in API network namespace'
+    return 1
+  fi
+  sleep 2 # Ensure tcpdump initialized before app login/sync requests.
+  if [[ "$(compose ps --status running --services capture)" != *capture* ]]; then
+    compose logs capture >&2 || true
+    mark e2e failed 'tcpdump exited before E2E started'
+    return 1
+  fi
+
+  echo "adb reverse tcp:8000 -> 127.0.0.1:${host_port} (Docker API published port)"
+  if [[ "${LAB2_E2E_PREBUILT_APKS:-0}" == 1 ]]; then
+    # CI build job already compiled both APKs. Do NOT rebuild in test stage.
+    local app_apk="$ROOT/mobile-app/app/build/outputs/apk/debug/app-debug.apk"
+    local test_apk="$ROOT/mobile-app/app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk"
+    if [[ ! -s "$app_apk" || ! -s "$test_apk" ]]; then
+      echo 'Missing build-stage APK artifacts (LAB2_E2E_PREBUILT_APKS=1)' >&2
+      android_rc=1
+    else
+      adb -s "$serial" reverse tcp:8000 tcp:"$host_port" || android_rc=$?
+      if [[ "$android_rc" == 0 ]]; then adb -s "$serial" install -r "$app_apk" || android_rc=$?; fi
+      if [[ "$android_rc" == 0 ]]; then adb -s "$serial" install -r "$test_apk" || android_rc=$?; fi
+      if [[ "$android_rc" == 0 ]]; then
+        local log="$REPORTS/diagnostics/android-e2e-instrumentation.log"
+        mkdir -p "$(dirname "$log")"
+        adb -s "$serial" shell am instrument -w -r \
+          -e class com.z23u184.studymate.app.StudyMateApplicationE2ETest \
+          -e studymate.baseUrl http://127.0.0.1:8000/ \
+          com.z23u184.studymate.app.lab2e2e.test/androidx.test.runner.AndroidJUnitRunner \
+          > "$log" 2>&1 || android_rc=$?
+        cat "$log"
+        python3 "$ROOT/lab2/scripts/instrumentation_report.py" "$log" --reports "$REPORTS" || android_rc=1
+      fi
+      adb -s "$serial" reverse --remove tcp:8000 >/dev/null 2>&1 || true
+    fi
+  else
+    # Local developer path: Gradle builds + executes + produces Android JUnit XML.
+    rm -rf "$ROOT/mobile-app/app/build/outputs/androidTest-results"
+    compose run --build --rm --no-deps "${docker_env[@]}" android-tests bash -lc \
+      "adb devices | grep -Eq 'device$' && adb reverse tcp:8000 tcp:${host_port} && chmod +x ./gradlew && ./gradlew --no-daemon :app:connectedDebugAndroidTest -Plab2E2e=true -Plab2E2eBaseUrl=http://127.0.0.1:8000/ -Pandroid.testInstrumentationRunnerArguments.class=com.z23u184.studymate.app.StudyMateApplicationE2ETest -Pandroid.testInstrumentationRunnerArguments.studymate.baseUrl=http://127.0.0.1:8000/" || android_rc=$?
+    copy_junit "$ROOT/mobile-app/app/build/outputs/androidTest-results" android-e2e
+    adb -s "$serial" reverse --remove tcp:8000 >/dev/null 2>&1 || true
+  fi
+
+  # Always stop tcpdump *before* reading the pcap, including on test failures.
+  compose stop -t 5 capture || rc=1
+  if [[ ! -s "$REPORTS/lab2-e2e.pcap" ]]; then
+    echo 'ERROR: No real E2E traffic was captured in lab2-e2e.pcap' >&2
+    rc=1
+  else
+    echo "Real Android E2E packet capture: $REPORTS/lab2-e2e.pcap"
+  fi
+  if [[ "$android_rc" != 0 || "$rc" != 0 ]]; then
     save_server_diagnostics e2e
-    mark e2e failed "Headless Android application E2E failed or ADB unavailable (exit $rc)"
+    mark e2e failed "Android E2E or network capture failed (android=${android_rc}, capture=${rc})"
     return 1
   fi
 }
 
 case "$MODE" in
+  build)
+    mark_not_selected build
+    run_build || exit 1
+    ;;
   unit-python)
     mark_not_selected unit
     run_unit_python || exit 1

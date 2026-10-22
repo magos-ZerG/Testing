@@ -13,6 +13,8 @@ workflow = (root / ".github/workflows/lab2-ci.yml").read_text()
 
 assert "ContentResolver" in client or "contentResolver.call(" in client
 assert "Retrofit.Builder()" in client and "backend.pull(" in client
+assert "@Serializable" in client and "asConverterFactory" in client
+assert "JSONObject" not in client and "JSONArray" not in client
 assert not any(s in client for s in ("org.koin", "StudyMateDatabase", "CreateTopicUseCase", "CreateTaskUseCase", "StudyDataSyncCoordinator", "MainActivity", "Espresso", "koin.get"))
 assert "@POST(\"api/v1/auth/login\")" in client and "@GET(\"api/v1/sync/pull\")" in client
 assert "Lab2E2eBridgeProvider" in bridge and "GetTaskByIdUseCase" in bridge
@@ -22,4 +24,6 @@ assert "applicationIdSuffix = \".lab2e2e\"" in build
 assert 'serial="$(adb devices' in runner and "emulator-" in runner
 assert "reactivecircus/android-emulator-runner@v2" in workflow
 assert "-Plab2E2e=true" in runner
+assert "LAB2_E2E_PREBUILT_APKS" in runner and "compose up --build -d capture" in runner
+assert "  build:" in workflow and "Fetch E2E APKs from build stage" in workflow
 print("PASS: black-box contract, Retrofit oracle, disabled bridge and GitHub emulator verified")

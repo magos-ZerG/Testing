@@ -7,7 +7,69 @@ permissions:
   contents: read
 
 jobs:
+  build:
+    name: "Build Android E2E APKs (separate stage)"
+    runs-on: ubuntu-24.04
+    timeout-minutes: 70
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Restore Gradle cache
+        uses: actions/cache@v4
+        with:
+          path: .ci-cache/gradle
+          key: gradle-linux-v2-${{ hashFiles('mobile-app/gradle/wrapper/gradle-wrapper.properties', 'mobile-app/**/*.gradle.kts', 'mobile-app/gradle/libs.versions.toml', 'mobile-app/gradle.properties') }}
+          restore-keys: |
+            gradle-linux-v2-
+
+      - name: Prepare Gradle cache
+        run: mkdir -p .ci-cache/gradle
+
+      - name: Compile app and instrumentation APKs without running tests
+        id: compile
+        env:
+          LAB2_CI_STAGE: '1'
+          LAB2_GRADLE_CACHE_MOUNT: ${{ github.workspace }}/.ci-cache/gradle
+        run: bash lab2/scripts/run-lab2.sh build
+
+      - name: Restore cache permissions
+        if: ${{ always() }}
+        run: |
+          if [[ -d .ci-cache/gradle ]]; then
+            sudo chown -R "$(id -u):$(id -g)" .ci-cache/gradle
+          fi
+
+      - name: Record build stage status for Allure
+        if: ${{ always() }}
+        env:
+          STAGE_OUTCOME: ${{ steps.compile.outcome }}
+        run: |
+          mkdir -p lab2/reports/ci-stage-results
+          printf '%s\n' "$STAGE_OUTCOME" > lab2/reports/ci-stage-results/build.txt
+
+      - name: Publish compiled APKs for Android E2E job
+        if: ${{ success() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: lab2-apks-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            mobile-app/app/build/outputs/apk/debug/app-debug.apk
+            mobile-app/app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Upload build status for combined Allure
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: lab2-stage-${{ github.run_id }}-${{ github.run_attempt }}-build
+          path: lab2/reports/
+          if-no-files-found: warn
+          retention-days: 30
+
   unit-python:
+    needs: [build]
     name: "Python unit (8 tests)"
     runs-on: ubuntu-24.04
     timeout-minutes: 35
@@ -38,6 +100,7 @@ jobs:
           if-no-files-found: warn
           retention-days: 30
   unit-android:
+    needs: [build]
     name: "Kotlin unit / Robolectric (10 tests)"
     runs-on: ubuntu-24.04
     timeout-minutes: 65
@@ -171,16 +234,11 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Restore Gradle distributions and dependencies
-        uses: actions/cache@v4
+      - name: Fetch E2E APKs from build stage
+        uses: actions/download-artifact@v4
         with:
-          path: .ci-cache/gradle
-          key: gradle-linux-v2-${{ hashFiles('mobile-app/gradle/wrapper/gradle-wrapper.properties', 'mobile-app/**/*.gradle.kts', 'mobile-app/gradle/libs.versions.toml', 'mobile-app/gradle.properties') }}
-          restore-keys: |
-            gradle-linux-v2-
-
-      - name: Prepare writable Gradle cache
-        run: mkdir -p .ci-cache/gradle
+          name: lab2-apks-${{ github.run_id }}-${{ github.run_attempt }}
+          path: mobile-app/app/build/outputs/apk
 
       - name: Enable hardware acceleration for Android emulator
         run: |
@@ -194,20 +252,13 @@ jobs:
         uses: reactivecircus/android-emulator-runner@v2
         env:
           LAB2_CI_STAGE: '1'
-          LAB2_GRADLE_CACHE_MOUNT: ${{ github.workspace }}/.ci-cache/gradle
+          LAB2_E2E_PREBUILT_APKS: '1'
         with:
           api-level: 35
           target: google_apis
           arch: x86_64
           disable-animations: true
           script: bash lab2/scripts/run-lab2.sh e2e
-
-      - name: Restore runner permissions for Gradle cache upload
-        if: ${{ always() }}
-        run: |
-          if [[ -d .ci-cache/gradle ]]; then
-            sudo chown -R "$(id -u):$(id -g)" .ci-cache/gradle
-          fi
 
       - name: Record E2E stage status for Allure aggregation
         if: ${{ always() }}
@@ -227,7 +278,7 @@ jobs:
           retention-days: 30
   prepare-pages:
     name: Collect stage results + generate Allure + save Pages history
-    needs: [unit-python, unit-android, integration, android-device, e2e]
+    needs: [build, unit-python, unit-android, integration, android-device, e2e]
     if: ${{ always() && github.event_name != 'pull_request' && github.ref == 'refs/heads/main' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 40
@@ -265,6 +316,7 @@ jobs:
 
       - name: Include failed and skipped stages in Allure
         env:
+          CI_STATUS_BUILD: ${{ needs.build.result }}
           CI_STATUS_UNIT_PYTHON: ${{ needs.unit-python.result }}
           CI_STATUS_UNIT_ANDROID: ${{ needs.unit-android.result }}
           CI_STATUS_INTEGRATION: ${{ needs.integration.result }}

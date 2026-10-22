@@ -1,6 +1,7 @@
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.compose)
+    alias(libs.plugins.kotlin.serialization)
 }
 
 android {
@@ -85,6 +86,8 @@ dependencies {
     // calls that public contract and uses an independent Retrofit HTTP client.
     implementation(libs.kotlinx.coroutines.core)
     androidTestImplementation(libs.retrofit)
+    androidTestImplementation(libs.kotlinx.serialization.json)
+    androidTestImplementation(libs.retrofit2.kotlinx.serialization.converter)
     androidTestImplementation(libs.okhttp)
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)
