@@ -225,11 +225,6 @@ run_e2e() {
   printf '\n=== E2E: Android APP -> FastAPI -> PostgreSQL -> Android (real traffic capture) ===\n'
   local host_port rc=0 serial='' android_rc=0
   local -a docker_env=()
-  host_port="$(compose port api 8000 | awk -F: '{print $NF}')"
-  if [[ ! "$host_port" =~ ^[0-9]+$ ]]; then
-    mark e2e failed 'Cannot determine API host port for Android E2E'
-    return 1
-  fi
 
   # Fail before touching a physical phone. Use exactly one booted emulator.
   serial="$(adb devices | awk '$1 ~ /^emulator-[0-9]+$/ && $2 == "device" { print $1; exit }')"
@@ -237,13 +232,16 @@ run_e2e() {
     mark e2e failed 'No ready Android emulator detected by ADB (real phones not supported)'
     return 1
   fi
-  echo "E2E target: $serial. API is mapped to host port $host_port"
+  echo "E2E target: $serial"
   docker_env=(-e "ANDROID_SERIAL=$serial")
 
   # The capture container shares API network namespace. Unlike replay-http.sh,
   # this capture includes requests from the actual installed Android APK.
   rm -f "$REPORTS/lab2-e2e.pcap"
-  if ! compose up --build -d capture; then
+  # PostgreSQL and API are already running and healthy from start_stand().
+  # Do not recreate API when starting the capture sidecar: Docker may assign a
+  # different published API port when its container is recreated.
+  if ! compose up --build --no-recreate -d capture; then
     mark e2e failed 'Could not start tcpdump in API network namespace'
     return 1
   fi
@@ -254,6 +252,26 @@ run_e2e() {
     return 1
   fi
 
+  # Resolve the port AFTER starting capture, since Compose may otherwise
+  # recreate the API and invalidate an earlier published-port lookup.
+  if ! host_port="$(compose port api 8000 | awk -F: 'NF {print $NF; exit}')" ||
+      [[ ! "$host_port" =~ ^[0-9]+$ ]]; then
+    save_server_diagnostics e2e
+    mark e2e failed 'Cannot determine current API host port for Android E2E'
+    return 1
+  fi
+  echo "Current API published host port: $host_port"
+
+  # Detect an unreachable published port before starting Android instrumentation.
+  if ! curl --fail --silent --show-error --connect-timeout 2 --max-time 5 \
+      --retry 5 --retry-connrefused --retry-delay 1 \
+      "http://127.0.0.1:${host_port}/health" >/dev/null; then
+    save_server_diagnostics e2e
+    mark e2e failed "API /health is unreachable on host port ${host_port}"
+    return 1
+  fi
+  echo "API /health: OK on host port $host_port"
+
   echo "adb reverse tcp:8000 -> 127.0.0.1:${host_port} (Docker API published port)"
   if [[ "${LAB2_E2E_PREBUILT_APKS:-0}" == 1 ]]; then
     # CI build job already compiled both APKs. Do NOT rebuild in test stage.
@@ -263,7 +281,9 @@ run_e2e() {
       echo 'Missing build-stage APK artifacts (LAB2_E2E_PREBUILT_APKS=1)' >&2
       android_rc=1
     else
+      adb -s "$serial" reverse --remove tcp:8000 >/dev/null 2>&1 || true
       adb -s "$serial" reverse tcp:8000 tcp:"$host_port" || android_rc=$?
+      if [[ "$android_rc" == 0 ]]; then adb -s "$serial" reverse --list; fi
       if [[ "$android_rc" == 0 ]]; then adb -s "$serial" install -r "$app_apk" || android_rc=$?; fi
       if [[ "$android_rc" == 0 ]]; then adb -s "$serial" install -r "$test_apk" || android_rc=$?; fi
       if [[ "$android_rc" == 0 ]]; then
