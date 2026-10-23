@@ -1,0 +1,1 @@
+WARNING  app.services.auth_service:auth_service.py:61 Login failed: invalid credentials | email=bad-password-e2977eb4fb624a8c9bea99a26061ecde@example.com
